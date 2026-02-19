@@ -120,7 +120,7 @@ The demo video shows this in action: an agent exceeds its daily limit and is for
 [![Primer x402 Agent Manifold](https://ytcards.demolab.com/?id=51P_oOkBdQA&title=Primer+x402+Agent+Manifold&lang=en&timestamp=1771020108&background_color=%230d1117&title_color=%23ffffff&stats_color=%23dedede&max_title_lines=1&width=250&border_radius=5 "Primer x402 Agent Manifold")](https://www.youtube.com/watch?v=51P_oOkBdQA)
 <!-- END YOUTUBE-CARDS -->
 
-The demo shows the full payment flow from agent request to on-chain settlement, including a failure case where a payment limit is exceeded and the agent is forced to consider a new choice.
+The demo shows the full payment flow from agent request to on-chain settlement, including a failure case where a payment limit is exceeded and the agent is forced to consider a new choice. This video features a prototype version of MultiClaw that doesn't include all current features.
 
 ## Download
 
@@ -138,3 +138,4 @@ python src/app.py
 - [AP2 Registry](https://ap2.primer.systems)
 - [Test Paywall Builder](https://www.primer.systems/test-paywall)
 - [Medium Article](https://medium.com/@primersystems/the-x402-agent-manifold-d51e72ee029d)
+
