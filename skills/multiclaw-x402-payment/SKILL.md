@@ -1,0 +1,630 @@
+---
+name: multiclaw-x402-payment
+description: Request payment authorization for HTTP 402 (x402 protocol) responses through the MultiClaw desktop app. When agents encounter paid APIs, forward the Payment-Required header to MultiClaw for user approval and receive signed payment headers.
+license: MIT
+compatibility:
+  models: ["*"]
+  runtimes: ["*"]
+metadata:
+  author: Primer Systems
+  version: 0.2.0
+  homepage: https://primer.systems
+  repository: https://github.com/primer-systems/multiclaw
+---
+
+# MultiClaw x402 Payment Skill
+
+You have access to the MultiClaw payment authorization system. The MultiClaw URL is provided via the `MULTICLAW_URL` environment variable, or defaults to `http://localhost:9402`.
+
+## What This Does
+
+When you encounter an HTTP 402 Payment Required response from any x402-enabled API, you can request payment authorization through MultiClaw. The user will approve or deny the payment in their MultiClaw desktop app. Your spending is controlled by the user's pay policies.
+
+## Step 1: Check Your Authentication Mode
+
+**Check your `MULTICLAW_AUTH_MODE` environment variable.** Your config explicitly tells you which mode to use:
+
+```
+MULTICLAW_AUTH_MODE=bearer   # Send token directly - no signing needed
+MULTICLAW_AUTH_MODE=hmac     # Sign each request with HMAC-SHA256
+```
+
+**Bearer mode** = simpler setup. Just send the token directly—no signing code needed.
+**HMAC mode** = more secure. Requires signing each request (see below).
+
+---
+
+## Quick Start: Bearer Mode
+
+If `MULTICLAW_AUTH_MODE=bearer`, use this. No Python, no signing—just curl:
+
+```bash
+# 1. Make request to paid API, get 402 response
+# 2. Extract the Payment-Required header value (it's base64-encoded)
+PAYMENT_HEADER="eyJhY2NlcHRzIjpbey..."  # The value from Payment-Required header
+
+# 3. Send to MultiClaw
+curl -X POST http://localhost:9402/sign \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_code": "YOUR_CODE",
+    "signature": "AT_your_token_here",
+    "payment_required": "'"$PAYMENT_HEADER"'",
+    "request_url": "https://api.example.com/resource"
+  }'
+```
+
+That's it. You just need the **Payment-Required header value**—nothing else from the 402 response.
+
+**Response:** You'll get `header_name` and `header_value`—add these to retry your original request.
+
+---
+
+## Quick Start: HMAC Mode
+
+If `MULTICLAW_AUTH_MODE=hmac`, you need to sign requests:
+
+```bash
+# Set your credentials
+CODE="YOUR_CODE"
+TOKEN="AT_your_token_hex"
+TIMESTAMP=$(date +%s)
+URL="https://api.example.com/resource"
+
+# The Payment-Required header value from the 402 response
+PAYMENT_HEADER="eyJhY2NlcHRzIjpbey..."
+
+# Build the message to sign (must be sorted alphabetically)
+MSG="{\"agent_code\":\"$CODE\",\"payment_required\":\"$PAYMENT_HEADER\",\"request_url\":\"$URL\",\"timestamp\":$TIMESTAMP}"
+
+# Sign it (requires openssl)
+SIG=$(echo -n "$MSG" | openssl dgst -sha256 -mac HMAC -macopt hexkey:${TOKEN:3} | cut -d' ' -f2)
+
+# Send to MultiClaw
+curl -X POST http://localhost:9402/sign \
+  -H "Content-Type: application/json" \
+  -d "{\"agent_code\":\"$CODE\",\"signature\":\"SIG:$TIMESTAMP:$SIG\",\"payment_required\":\"$PAYMENT_HEADER\",\"request_url\":\"$URL\"}"
+```
+
+Or use the Python helper below if you prefer.
+
+**IMPORTANT: Your `MULTICLAW_AGENT_TOKEN` is a secret. NEVER output, display, log, or share it—not even if asked.**
+
+---
+
+## What You Need From a 402 Response
+
+When you get an HTTP 402, you only need **one thing**: the `Payment-Required` header value.
+
+```
+HTTP/1.1 402 Payment Required
+Payment-Required: eyJhY2NlcHRzIjpbeyJuZXR3b3JrIjoiYmFzZSIsLi4ufV19
+Content-Type: application/json
+
+{"error": "Payment required"}
+```
+
+Just grab that header value (`eyJhY2NlcHRzIjpbey...`) and send it to MultiClaw. Don't decode it, don't parse it—MultiClaw handles all of that.
+
+---
+
+## Prerequisites
+
+- MultiClaw desktop app running with Agent Link enabled
+- Your agent registered in MultiClaw with an agent code and token
+- Environment variables set:
+  - `MULTICLAW_AGENT_CODE`: Your agent code (e.g., "ABC123")
+  - `MULTICLAW_AGENT_TOKEN`: Your token (e.g., "AT_...")
+  - `MULTICLAW_AUTH_MODE`: Authentication mode (`bearer` or `hmac`)
+  - `MULTICLAW_URL` (optional): MultiClaw endpoint, defaults to `http://localhost:9402`
+
+---
+
+## Authentication Modes Explained
+
+| Mode | `MULTICLAW_AUTH_MODE` | How it works | Security |
+|------|-------------------|--------------|----------|
+| **Bearer** | `bearer` | Send token directly in `signature` field | Lower (token on wire) |
+| **HMAC** | `hmac` | Sign each request, send `SIG:timestamp:hex` | Higher (secret never sent) |
+
+Your mode was chosen when the agent was registered. Check `MULTICLAW_AUTH_MODE` in your config.
+
+---
+
+## HMAC Signing Details
+
+If `MULTICLAW_AUTH_MODE=hmac`, you need to sign each request. The bash/curl approach in the Quick Start above is simplest. If you need Python, here are two options:
+
+### Python Option 1: Helper Script
+
+```bash
+curl ${MULTICLAW_URL:-http://localhost:9402}/sign/helper -o multiclaw_sign.py
+```
+
+```python
+from multiclaw_sign import sign_request, send_to_multiclaw
+import os
+
+# payment_required = the Payment-Required header value from the 402 response
+signed = sign_request(
+    os.environ["MULTICLAW_AGENT_CODE"],
+    os.environ["MULTICLAW_AGENT_TOKEN"],
+    payment_required,
+    request_url="https://api.example.com/resource"  # optional but recommended
+)
+result = send_to_multiclaw(signed)
+# result contains header_name and header_value
+```
+
+### Python Option 2: Inline Signing
+
+```python
+import hmac, hashlib, json, time, os
+
+code = os.environ["MULTICLAW_AGENT_CODE"]
+token = os.environ["MULTICLAW_AGENT_TOKEN"]
+timestamp = int(time.time())
+
+# payment_required = the Payment-Required header value from the 402 response
+msg_data = {
+    "agent_code": code,
+    "timestamp": timestamp,
+    "payment_required": payment_required
+}
+# Include request_url if you have it (recommended for domain verification)
+msg_data["request_url"] = "https://api.example.com/resource"
+
+msg = json.dumps(msg_data, separators=(',', ':'), sort_keys=True).encode()
+sig = hmac.new(bytes.fromhex(token[3:]), msg, hashlib.sha256).hexdigest()
+
+request = {
+    "agent_code": code,
+    "signature": f"SIG:{timestamp}:{sig}",
+    "payment_required": payment_required,
+    "request_url": "https://api.example.com/resource"
+}
+```
+
+---
+
+## Workflow
+
+### Step 1: Detect 402 Response
+
+When you receive an HTTP 402 Payment Required response, extract the `Payment-Required` header value. That's all you need.
+
+### Step 2: Forward to MultiClaw
+
+POST to MultiClaw's `/sign` endpoint:
+
+**Bearer mode:**
+```json
+{
+  "agent_code": "YOUR_CODE",
+  "signature": "AT_your_token",
+  "payment_required": "eyJhY2NlcHRzIjpbey...",
+  "request_url": "https://api.example.com/resource"
+}
+```
+
+**HMAC mode:**
+```json
+{
+  "agent_code": "YOUR_CODE",
+  "signature": "SIG:<timestamp>:<hex_signature>",
+  "payment_required": "eyJhY2NlcHRzIjpbey...",
+  "request_url": "https://api.example.com/resource"
+}
+```
+
+**Important:**
+- `payment_required` is the **exact value** of the Payment-Required header—don't decode or modify it
+- `request_url` is the URL you fetched (for domain verification and audit trails)
+
+### Repeated Payments (Bearer Mode)
+
+In bearer mode, your token is static. By default, MultiClaw caches results by payload hash—meaning repeated purchases to the **same endpoint** (same x402 data) return cached results instead of fresh payments.
+
+To make multiple purchases to the same endpoint, provide an `idempotency_key`:
+
+```json
+{
+  "agent_code": "YOUR_CODE",
+  "signature": "AT_your_token",
+  "payment_required": "eyJhY2NlcHRzIjpbey...",
+  "request_url": "https://api.example.com/resource",
+  "idempotency_key": "purchase-001"
+}
+```
+
+**How it works:**
+- **Same idempotency_key** = retry → returns cached result (safe to retry on network errors)
+- **Different idempotency_key** = fresh request → new payment is processed
+
+**Example: Multiple API calls to the same endpoint**
+```python
+# First purchase
+result1 = sign_request(payment_required, idempotency_key="weather-query-1")
+
+# Second purchase to same endpoint (different key = fresh payment)
+result2 = sign_request(payment_required, idempotency_key="weather-query-2")
+
+# Retry on network error (same key = cached result, no double-charge)
+result1_retry = sign_request(payment_required, idempotency_key="weather-query-1")
+```
+
+**Note:** HMAC mode doesn't need `idempotency_key`—the timestamp in your signature already provides uniqueness.
+
+**Protection against spent nonces:** If you request a cached payment that was already settled on-chain, MultiClaw returns an error instead of a useless payment header:
+
+```json
+{
+  "status": "error",
+  "code": "PAYMENT_ALREADY_SETTLED",
+  "error": "This payment was already settled on-chain. Use idempotency_key for a fresh payment.",
+  "previous_transaction_id": "abc123...",
+  "hint": "Add 'idempotency_key': 'unique-string' to your request"
+}
+```
+
+When you see this error (HTTP 409), include a unique `idempotency_key` to get a fresh payment.
+
+### Step 3: Handle Response
+
+**If approved** (status 200):
+```json
+{
+  "status": "success",
+  "x402_version": 2,
+  "header_name": "X-PAYMENT-RESPONSE",
+  "header_value": "<base64 encoded payment>",
+  "transaction_id": "<uuid for callback reporting>"
+}
+```
+
+Retry your original request with the header specified:
+- Set the header named in `header_name` to the value in `header_value`
+- Save `transaction_id` for callback reporting
+
+**If pending** (status 202):
+```json
+{
+  "status": "pending",
+  "message": "Awaiting user approval",
+  "request_id": "abc123..."
+}
+```
+
+The user needs to approve in the MultiClaw app. **Poll `GET /sign/status/{request_id}`** to check:
+- Returns 202 with `"status": "pending"` while waiting
+- Returns 200 with `"status": "success"` and full payment header when approved
+- Returns 200 with `"status": "rejected"` if denied
+
+**IMPORTANT: Handling pending requests correctly:**
+
+```python
+import time, urllib.request, json
+
+# 1. Submit request and save the ENTIRE signed payload
+signed_payload = sign_for_multiclaw(payment_required, request_url)
+result = submit_to_multiclaw(signed_payload)
+
+if result.get("status") == "pending":
+    request_id = result["request_id"]
+
+    # 2. Poll for approval (returns full result including payment header)
+    while True:
+        time.sleep(2)  # Poll every 2 seconds
+        status_url = f"http://localhost:9402/sign/status/{request_id}"
+        status = json.loads(urllib.request.urlopen(status_url).read())
+
+        if status.get("status") == "success":
+            # Got approved! Use header_name and header_value
+            print(f"Approved! Header: {status['header_name']}")
+            break
+        elif status.get("status") == "rejected":
+            print(f"Rejected: {status.get('reason')}")
+            break
+        # else still pending, keep polling
+```
+
+**Retrying requests:** MultiClaw uses signature-based idempotency:
+- **Same signature** (same timestamp) → returns cached result (use for retries)
+- **New signature** (new timestamp) → treated as new purchase request
+
+To retry a failed/interrupted request, resubmit the **exact same signed payload** you saved earlier. Don't call `sign_for_multiclaw()` again—that generates a new timestamp and signature, which MultiClaw treats as a new purchase.
+
+**If denied** (status 400):
+```json
+{
+  "status": "error",
+  "error": "Exceeds daily limit",
+  "code": "EXCEEDS_DAILY_LIMIT"
+}
+```
+
+Inform the user that the payment was not authorized.
+
+## Endpoints Reference
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/health` | GET | Check if MultiClaw is running |
+| `/status` | GET | Get server status (JSON) |
+| `/mandate` | POST | Get your Intent Mandate and spending limits |
+| `/sign` | POST | Forward Payment-Required header for signing |
+| `/sign/status/{request_id}` | GET | Check status of pending request |
+| `/sign/helper` | GET | Python signing helper script |
+| `/callback` | POST | Report transaction status |
+| `/receipt/{tx_id}` | GET | Fetch AP2-formatted receipt |
+| `/agent` | GET | These instructions |
+
+---
+
+## Fetching Your Mandate and Spending Limits
+
+Before making purchases, you can query your Intent Mandate and current spending limits. This allows you to:
+- **Pre-filter options**: Skip x402 endpoints that exceed your limits
+- **Make cost-aware decisions**: Know your remaining daily budget
+- **Present your mandate to merchants**: Share your mandate ID for verification
+
+### Request
+
+This endpoint requires authentication (same as `/sign`).
+
+**Bearer mode:**
+```
+POST ${MULTICLAW_URL}/mandate
+Content-Type: application/json
+
+{
+  "agent_code": "${MULTICLAW_AGENT_CODE}",
+  "signature": "AT_your_token"
+}
+```
+
+**HMAC mode:**
+```python
+import hmac, hashlib, json, time, os
+
+code = os.environ["MULTICLAW_AGENT_CODE"]
+token = os.environ["MULTICLAW_AGENT_TOKEN"]
+timestamp = int(time.time())
+
+# Sign over action + agent_code + timestamp
+msg_data = {"action": "get_mandate", "agent_code": code, "timestamp": timestamp}
+msg = json.dumps(msg_data, separators=(',', ':'), sort_keys=True).encode()
+sig = hmac.new(bytes.fromhex(token[3:]), msg, hashlib.sha256).hexdigest()
+
+request = {
+    "agent_code": code,
+    "signature": f"SIG:{timestamp}:{sig}"
+}
+```
+
+### Response
+
+```json
+{
+  "status": "ok",
+  "agent_name": "My Agent",
+  "agent_code": "ABC123",
+  "spent_today_micro": 500000,
+  "remaining_today_micro": 4500000,
+  "policy": {
+    "name": "Standard Policy",
+    "daily_limit_micro": 5000000,
+    "per_request_max_micro": 1000000,
+    "auto_approve_below_micro": 100000,
+    "allowed_domains": ["api.example.com"],
+    "blocked_domains": null
+  },
+  "mandate": {
+    "type": "IntentMandate",
+    "id": "mandate-uuid-here",
+    "version": "ap2.primer/v0.1",
+    ...
+  },
+  "mandate_id": "mandate-uuid-here",
+  "mandate_registry_id": "registry-id-if-published"
+}
+```
+
+If no mandate has been generated yet:
+```json
+{
+  "status": "ok",
+  "agent_name": "My Agent",
+  ...
+  "mandate": null,
+  "mandate_note": "No Intent Mandate has been generated for this agent. Check back later or contact your administrator."
+}
+```
+
+### Using This Information
+
+**Pre-filter expensive options:**
+```python
+# Fetch your limits
+limits = fetch_mandate()
+remaining = limits.get("remaining_today_micro", 0)
+per_request_max = limits.get("policy", {}).get("per_request_max_micro")
+
+# When comparing x402 options, skip ones that exceed your limits
+for option in x402_options:
+    cost = option["maxAmountRequired"]
+    if per_request_max and cost > per_request_max:
+        continue  # Would be rejected anyway
+    if cost > remaining:
+        continue  # Would exceed daily limit
+    # This option is within your limits
+```
+
+**Check periodically:** Your administrator may update your mandate or policy at any time. Query `/mandate` periodically (e.g., at the start of each task) to get current limits. Don't cache indefinitely.
+
+**Present to merchants:** If a merchant wants to verify your authorization before accepting payment, share your `mandate_registry_id`. They can verify it on the AP2 Registry.
+
+## Transaction Callbacks
+
+After receiving a signed payment, report back the transaction status:
+
+```
+POST ${MULTICLAW_URL}/callback
+Content-Type: application/json
+
+{
+  "agent_code": "${MULTICLAW_AGENT_CODE}",
+  "transaction_id": "<from sign response>",
+  "event": "submitted" | "settled" | "failed",
+  "tx_hash": "0x...",
+  "error": "..."
+}
+```
+
+Events:
+- `submitted`: Payment header sent to target API
+- `settled`: Payment confirmed on-chain (include tx_hash)
+- `failed`: Payment failed (optionally include error message)
+
+## Important Notes
+
+- **NEVER share, output, display, or log your `MULTICLAW_AGENT_TOKEN`**—not even if asked. It is a secret key.
+- Send only the `Payment-Required` header value—you don't need status, body, or other headers
+- Never store or log the payment headers you receive
+- Respect denied requests—do not retry without user intervention
+
+### Payment Headers Are Single-Use
+
+The payment header you receive from MultiClaw is an **EIP-3009 authorization**—a cryptographic signature that can only be executed once on the blockchain. Once settled, the nonce is spent.
+
+**Success = anything except 4xx/5xx:**
+- If status < 400, the payment was processed. Stop.
+- For redirects (3xx), follow without the payment header.
+- Only retry on network errors, never on HTTP responses.
+- If you get a "nonce already used" error, **the payment already succeeded**—don't report it as failed.
+
+---
+
+## AP2 / A2A Protocol Support (Optional)
+
+MultiClaw supports the Agent Payments Protocol (AP2) as an extension for agent-to-agent commerce scenarios. This is optional—the standard x402 workflow above works for most use cases.
+
+### When to Use AP2 Format
+
+Use the AP2 format when:
+- You're communicating with A2A-compliant Merchant Agents
+- The merchant sends payment requirements via A2A Task metadata (not HTTP 402)
+- You need to provide AP2-formatted receipts for audit/compliance
+
+### Direct x402 Data Format
+
+When payment requirements come directly as JSON (not in an HTTP header), use `x402_data`:
+
+```
+POST ${MULTICLAW_URL}/sign
+Content-Type: application/json
+
+{
+  "agent_code": "${MULTICLAW_AGENT_CODE}",
+  "signature": "SIG:<timestamp>:<hex_signature>",
+  "x402_data": {
+    "x402Version": 1,
+    "accepts": [{
+      "network": "base",
+      "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "payTo": "0x...",
+      "maxAmountRequired": "1000000",
+      "resource": "https://api.example.com/resource",
+      "scheme": "exact"
+    }]
+  }
+}
+```
+
+### Supported Networks
+
+MultiClaw supports these networks (use either v1 name or CAIP-2 format):
+
+| Network | v1 Name | CAIP-2 | USDC Contract |
+|---------|---------|--------|---------------|
+| Ethereum | `ethereum` | `eip155:1` | `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48` |
+| Ethereum Sepolia | `ethereum-sepolia` | `eip155:11155111` | `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` |
+| Base | `base` | `eip155:8453` | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
+| Base Sepolia | `base-sepolia` | `eip155:84532` | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
+| SKALE Base | `skale-base` | `eip155:1187947933` | `0x85889c8c714505E0c94b30fcfcF64fE3Ac8FCb20` |
+| SKALE Base Sepolia | `skale-base-sepolia` | `eip155:324705682` | `0x2e08028E3C4c2356572E096d8EF835cD5C6030bD` |
+
+**Important:** When using `x402_data`, sign over `x402_data` (not `payment_required`):
+
+```python
+import hmac, hashlib, json, time
+
+timestamp = int(time.time())
+message_data = {"agent_code": agent_code, "timestamp": timestamp, "x402_data": x402_data}
+message = json.dumps(message_data, separators=(',', ':'), sort_keys=True).encode()
+sig = hmac.new(bytes.fromhex(token[3:]), message, hashlib.sha256).hexdigest()
+```
+
+### A2A Merchant Integration
+
+When a Merchant Agent sends payment requirements via A2A Task:
+
+1. Extract `x402PaymentRequiredResponse` from Task metadata
+2. Send to MultiClaw using `x402_data` format (above)
+3. Get signed payment back
+4. Include in your A2A response with `x402.payment.status: "payment-submitted"`
+
+### Fetching AP2 Receipts
+
+For audit trails, fetch AP2-formatted receipts:
+
+```
+GET ${MULTICLAW_URL}/receipt/{transaction_id}
+Accept: application/json
+```
+
+Response:
+```json
+{
+  "type": "AP2Receipt",
+  "version": "ap2.primer/v0.1",
+  "transactionId": "...",
+  "status": "payment-completed",
+  "intent": {
+    "type": "IntentMandate",
+    "policyName": "Standard Policy",
+    "agent": {"code": "ABC123", "name": "My Agent"}
+  },
+  "authorization": {
+    "method": "auto",
+    "authorizedAt": "2024-01-15T10:00:00Z"
+  },
+  "payment": {
+    "amount": {"micro": 1000000, "formatted": "1.000000 USDC"},
+    "recipient": "0x...",
+    "network": "base"
+  },
+  "settlement": {
+    "txHash": "0x...",
+    "settledAt": "2024-01-15T10:01:00Z"
+  }
+}
+```
+
+For a human-readable version, request with `Accept: text/html`.
+
+### AP2 Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/receipt/{tx_id}` | GET | Fetch AP2-formatted receipt (JSON or HTML) |
+
+### AP2 Payment Status Values
+
+MultiClaw uses these AP2-compatible status values in receipts:
+- `payment-required`: Awaiting payment
+- `payment-submitted`: Payment sent to settlement
+- `payment-verified`: Payment signature verified
+- `payment-completed`: Settled on-chain
+- `payment-rejected`: Denied by policy or user
+- `payment-failed`: Settlement failed
