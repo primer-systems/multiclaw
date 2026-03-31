@@ -1,4 +1,4 @@
-# MultiClaw
+# MultiClaw v2.0.0
 
 ![Tests](https://github.com/primer-systems/multiclaw/actions/workflows/test.yml/badge.svg)
 
@@ -221,4 +221,15 @@ pytest tests/ -v
 - [AP2 Registry](https://ap2.primer.systems)
 - [Test Paywall Builder](https://www.primer.systems/test-paywall)
 - [Medium Article](https://medium.com/@primersystems/the-x402-agent-manifold-d51e72ee029d)
+
+## Changelog
+
+### v2.0.0
+- Added CLI mode with interactive REPL and scriptable single commands
+- Added headless daemon mode for server deployments
+- Added in-GUI console window (File → Console)
+- Single-instance architecture: CLI connects to running GUI via HTTP
+
+### v1.0.0
+- Initial release
 
