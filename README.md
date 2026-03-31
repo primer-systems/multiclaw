@@ -1,5 +1,7 @@
 # MultiClaw
 
+![Tests](https://github.com/primer-systems/multiclaw/actions/workflows/test.yml/badge.svg)
+
 **Get a grip on your agents.**
 
 A desktop x402 payment manager for AI agents, by Primer.
@@ -112,6 +114,49 @@ The demo video shows this in action: an agent exceeds its daily limit and is for
 - **Protocol Support:** v1/v2 HTTP x402 and A2A x402 (direct JSON payloads)
 - **Auth Modes:** Bearer tokens (simple) or HMAC-SHA256 (production)
 
+## Architecture
+
+MultiClaw uses a **layered core-outwards architecture** with clean separation between business logic and user interface:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ CORE LAYER (framework-independent)                      │
+│  • MultiClaw coordinator (single source of truth)       │
+│  • Services (SigningService, AgentServer)               │
+│  • Models (Agent, Policy, Transaction)                  │
+│  • Wallet crypto (HD wallets, AES-256-GCM encryption)   │
+└─────────────────────────────────────────────────────────┘
+                          ▲
+                          │ (direct calls or HTTP)
+          ┌───────────────┼───────────────┐
+          │               │               │
+┌─────────▼─────┐  ┌──────▼──────┐  ┌────▼────────┐
+│  GUI Mode     │  │  CLI Mode   │  │  Headless   │
+│  (PyQt6)      │  │  (terminal) │  │  (daemon)   │
+└───────────────┘  └─────────────┘  └─────────────┘
+```
+
+### Deployment Modes
+
+**GUI Mode** (default) — Double-click `MultiClaw.exe` for the full desktop application with tabs, dialogs, and approval prompts.
+
+**CLI Mode** — Open a terminal and run:
+```bash
+# Interactive REPL
+MultiClaw.exe --cli
+
+# Single commands (scriptable)
+MultiClaw.exe agent create MyAgent
+MultiClaw.exe policy list
+MultiClaw.exe wallet status
+```
+
+**Headless Mode** — Run `MultiClaw.exe --headless` for a daemon with no user interface, exposing only the agent API. Useful for servers or remote operation.
+
+### Single Instance
+
+When GUI mode is running, CLI commands connect to the same instance via HTTP — changes made in the terminal appear live in the GUI. This follows the standard daemon pattern used by Docker, Bitcoin Core, and similar tools.
+
 ## Demo
 
 **Video:** [Watch the demo →](https://www.youtube.com/watch?v=51P_oOkBdQA)
@@ -124,12 +169,50 @@ The demo shows the full payment flow from agent request to on-chain settlement, 
 
 ## Download
 
-**[Download MultiClaw →](https://github.com/primer-systems/multiclaw/releases)**
+**[Download MultiClaw.exe →](https://github.com/primer-systems/multiclaw/releases)**
 
-Or run from source:
+Download the latest release and run the executable. No installation required.
+
+### Scriptable Mode
+
+For automation, use global flags to bypass interactive prompts:
 ```bash
+# Auto-confirm destructive actions
+MultiClaw.exe policy delete old-policy --yes
+
+# Provide password non-interactively
+MultiClaw.exe wallet create mywallet --password "secret"
+
+# Or use environment variable
+set MULTICLAW_PASSWORD=secret
+MultiClaw.exe wallet open mywallet
+```
+
+## Development
+
+Running from source:
+```bash
+git clone https://github.com/primer-systems/multiclaw.git
+cd multiclaw
 pip install -r requirements.txt
-python src/app.py
+
+# GUI mode (default)
+python src/multiclaw.py
+
+# CLI interactive REPL
+python src/multiclaw.py --cli
+
+# Single command (scriptable)
+python src/multiclaw.py wallet status
+python src/multiclaw.py policy create standard --day 100 --yes
+
+# Headless daemon (no GUI, agent server only)
+python src/multiclaw.py --headless
+```
+
+Run tests:
+```bash
+pytest tests/ -v
 ```
 
 ## Links

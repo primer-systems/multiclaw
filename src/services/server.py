@@ -7,6 +7,8 @@ Provides endpoints for:
 - /agent - Agent instructions (Markdown)
 - /sign - Sign x402 payment requests
 - /ping - Connection test for agents
+
+NOTE: This module has NO Qt dependencies.
 """
 
 import hashlib
@@ -18,8 +20,6 @@ from collections import defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from typing import Optional, Callable, TYPE_CHECKING
-
-from PyQt6.QtCore import QObject, pyqtSignal
 
 if TYPE_CHECKING:
     from .signing import SigningService
@@ -103,6 +103,8 @@ ERROR_CODE_TO_HTTP_STATUS = {
     "INVALID_X402_FORMAT": 400,
     "INVALID_X402_RESPONSE": 400,
     "INVALID_X402_DATA": 400,
+    "INVALID_PAYMENT_DATA": 400,
+    "INVALID_PAYMENT_REQUIRED": 400,
     "INVALID_RESPONSE_STATUS": 400,
     "INVALID_REQUEST": 400,
     "MISSING_X402_DATA": 400,
@@ -161,7 +163,7 @@ MAX_CONTENT_LENGTH = 1 * 1024 * 1024
 # Validation patterns for path/query parameters
 UUID_PATTERN = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
 TX_HASH_PATTERN = re.compile(r'^0x[0-9a-fA-F]{64}$')
-AGENT_CODE_PATTERN = re.compile(r'^[A-Z0-9]{3,8}$')
+AGENT_ID_PATTERN = re.compile(r'^[A-Z0-9]{3,8}$')
 
 
 def get_signing_helper() -> str:
@@ -173,7 +175,7 @@ MultiClaw Signing Helper - Sign x402 payment requests for MultiClaw.
 Uses HMAC-SHA256 for signing (stdlib only, no extra dependencies).
 
 Usage:
-    python multiclaw_sign.py <agent_code> <agent_token> <payment_required_header>
+    python multiclaw_sign.py <agent_id> <agent_token> <payment_required_header>
 
 Or import and use directly:
     from multiclaw_sign import sign_request, send_to_multiclaw
@@ -187,12 +189,12 @@ import time
 import urllib.request
 
 
-def sign_request(agent_code: str, agent_token: str, payment_required: str, request_url: str = None) -> dict:
+def sign_request(agent_id: str, agent_token: str, payment_required: str, request_url: str = None) -> dict:
     """
     Sign a request for MultiClaw using HMAC-SHA256.
 
     Args:
-        agent_code: Your agent code (e.g., "ABC123")
+        agent_id: Your agent ID (e.g., "ABC123")
         agent_token: Your agent token (e.g., "AT_abc123...")
         payment_required: The Payment-Required header value from the 402 response
         request_url: Optional URL you fetched (for domain verification)
@@ -206,7 +208,7 @@ def sign_request(agent_code: str, agent_token: str, payment_required: str, reque
     # Create message to sign
     timestamp = int(time.time())
     message_data = {
-        "agent_code": agent_code,
+        "agent_id": agent_id,
         "timestamp": timestamp,
         "payment_required": payment_required
     }
@@ -218,7 +220,7 @@ def sign_request(agent_code: str, agent_token: str, payment_required: str, reque
     sig = hmac.new(shared_secret, message, hashlib.sha256).hexdigest()
 
     result = {
-        "agent_code": agent_code,
+        "agent_id": agent_id,
         "signature": f"SIG:{timestamp}:{sig}",
         "payment_required": payment_required
     }
@@ -248,15 +250,15 @@ def send_to_multiclaw(signed_request: dict, multiclaw_url: str = "http://localho
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
-        print("Usage: python primer_sign.py <agent_code> <agent_token> <payment_required_header> [request_url]")
+        print("Usage: python primer_sign.py <agent_id> <agent_token> <payment_required_header> [request_url]")
         sys.exit(1)
 
-    agent_code = sys.argv[1]
+    agent_id = sys.argv[1]
     agent_token = sys.argv[2]
     payment_required = sys.argv[3]
     request_url = sys.argv[4] if len(sys.argv) > 4 else None
 
-    signed = sign_request(agent_code, agent_token, payment_required, request_url)
+    signed = sign_request(agent_id, agent_token, payment_required, request_url)
     result = send_to_multiclaw(signed)
     print(json.dumps(result, indent=2))
 '''
@@ -518,7 +520,7 @@ def get_branded_html(port: int) -> str:
         <p>To request signing, POST to <code>/sign</code> with:</p>
         <pre style="background: #09090b; border: 1px solid #4A4543; padding: 12px; margin-top: 8px; font-size: 11px; overflow-x: auto;">
 {{
-  "agent_code": "ABC123",
+  "agent_id": "ABC123",
   "signature": "SIG:1707408000:a1b2c3...",
   "payment_required": "eyJhY2NlcHRzIjpbey4uLn1d...",
   "request_url": "https://api.example.com/resource"
@@ -845,13 +847,13 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/ping":
-            agent_code = request_data.get("agent_code")
-            if not agent_code:
-                self._send_json_response(400, {"status": "error", "error": "Missing agent_code", "code": "MISSING_AGENT_CODE"})
+            agent_id = request_data.get("agent_id")
+            if not agent_id:
+                self._send_json_response(400, {"status": "error", "error": "Missing agent_id", "code": "MISSING_AGENT_ID"})
                 return
 
             if _signing_service:
-                result = _signing_service.handle_ping(agent_code)
+                result = _signing_service.handle_ping(agent_id)
                 if result.get("status") == "ready":
                     status_code = 200
                 else:
@@ -861,15 +863,15 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 self._send_json_response(503, {"status": "error", "error": "Service not ready", "code": "SERVICE_NOT_READY"})
 
         elif self.path == "/sign":
-            agent_code = request_data.get("agent_code")
+            agent_id = request_data.get("agent_id")
             signature = request_data.get("signature")
             payment_required = request_data.get("payment_required")  # HTTP 402 Payment-Required header value
             x402_data = request_data.get("x402_data")  # AP2/A2A direct JSON format
             request_url = request_data.get("request_url")  # URL agent fetched (for domain verification)
             idempotency_key = request_data.get("idempotency_key")  # Optional: unique key per purchase for bearer mode
 
-            if not agent_code:
-                self._send_json_response(400, {"status": "error", "error": "Missing agent_code", "code": "MISSING_AGENT_CODE"})
+            if not agent_id:
+                self._send_json_response(400, {"status": "error", "error": "Missing agent_id", "code": "MISSING_AGENT_ID"})
                 return
 
             if not signature:
@@ -891,7 +893,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
 
             if _signing_service:
                 result = _signing_service.handle_sign_request(
-                    agent_code, signature,
+                    agent_id, signature,
                     payment_required=payment_required,
                     x402_data=x402_data,
                     request_url=request_url,
@@ -916,12 +918,12 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
 
         elif self.path == "/callback":
             # Agent callback to report transaction status
-            agent_code = request_data.get("agent_code")
+            agent_id = request_data.get("agent_id")
             transaction_id = request_data.get("transaction_id")
             event = request_data.get("event")  # submitted | settled | failed
 
-            if not agent_code:
-                self._send_json_response(400, {"status": "error", "error": "Missing agent_code", "code": "MISSING_AGENT_CODE"})
+            if not agent_id:
+                self._send_json_response(400, {"status": "error", "error": "Missing agent_id", "code": "MISSING_AGENT_ID"})
                 return
 
             if not transaction_id:
@@ -944,7 +946,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             if _signing_service:
                 tx_hash = request_data.get("tx_hash")
                 error = request_data.get("error")
-                result = _signing_service.handle_callback(agent_code, transaction_id, event, tx_hash, error)
+                result = _signing_service.handle_callback(agent_id, transaction_id, event, tx_hash, error)
                 if result.get("status") == "ok":
                     status_code = 200
                 else:
@@ -955,11 +957,11 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
 
         elif self.path == "/mandate":
             # Get agent's Intent Mandate and policy summary (requires authentication)
-            agent_code = request_data.get("agent_code")
+            agent_id = request_data.get("agent_id")
             signature = request_data.get("signature")
 
-            if not agent_code:
-                self._send_json_response(400, {"status": "error", "error": "Missing agent_code", "code": "MISSING_AGENT_CODE"})
+            if not agent_id:
+                self._send_json_response(400, {"status": "error", "error": "Missing agent_id", "code": "MISSING_AGENT_ID"})
                 return
 
             if not signature:
@@ -967,7 +969,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 return
 
             if _signing_service:
-                result = _signing_service.handle_get_mandate(agent_code, signature)
+                result = _signing_service.handle_get_mandate(agent_id, signature)
                 if result.get("status") == "ok":
                     status_code = 200
                 else:
@@ -997,20 +999,33 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True  # Don't block shutdown waiting for threads
 
 
-class AgentServer(QObject):
+class AgentServer:
     """Manages the HTTP server for agent connections."""
 
-    started = pyqtSignal(int)  # port
-    stopped = pyqtSignal()
-    error = pyqtSignal(str)
-    request_received = pyqtSignal(str)  # request info
-
     def __init__(self):
-        super().__init__()
         self._server: Optional[ThreadedHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
         self._port = 9402
         self._running = False
+
+        # Callbacks (replace Qt signals)
+        self._on_started: Optional[Callable[[int], None]] = None
+        self._on_stopped: Optional[Callable[[], None]] = None
+        self._on_error: Optional[Callable[[str], None]] = None
+
+    def set_callbacks(
+        self,
+        on_started: Callable[[int], None] = None,
+        on_stopped: Callable[[], None] = None,
+        on_error: Callable[[str], None] = None
+    ):
+        """Set callback functions for server events."""
+        if on_started:
+            self._on_started = on_started
+        if on_stopped:
+            self._on_stopped = on_stopped
+        if on_error:
+            self._on_error = on_error
 
     @property
     def port(self) -> int:
@@ -1047,10 +1062,12 @@ class AgentServer(QObject):
             server_stats.reset()
             server_stats.start()
             rate_limiter.reset()  # LOAD-01: Reset rate limiter on server start
-            self.started.emit(port)
+            if self._on_started:
+                self._on_started(port)
             return True
         except OSError as e:
-            self.error.emit(f"Failed to start server: {e}")
+            if self._on_error:
+                self._on_error(f"Failed to start server: {e}")
             return False
 
     def stop(self):
@@ -1060,7 +1077,8 @@ class AgentServer(QObject):
             self._server.shutdown()
             self._server = None
             self._thread = None
-            self.stopped.emit()
+            if self._on_stopped:
+                self._on_stopped()
 
     def _run_server(self):
         """Run the server in a background thread."""

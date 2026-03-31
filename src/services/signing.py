@@ -2,6 +2,8 @@
 Signing Service - Handles x402 payment signing.
 
 Validates requests, enforces policies, and signs payments.
+
+NOTE: This module has NO Qt dependencies. It uses callbacks/EventBus for notifications.
 """
 
 import base64
@@ -15,9 +17,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from dataclasses import dataclass
-from typing import Optional, TYPE_CHECKING
-
-from PyQt6.QtCore import QObject, pyqtSignal
+from typing import Optional, Callable, TYPE_CHECKING
 
 from models import Agent, SpendPolicy, Transaction, verify_agent_hmac, verify_bearer_token
 from .server import server_stats
@@ -38,19 +38,17 @@ SIGNATURE_CACHE_PRUNE_COUNT = 100
 
 # Network mappings between v1 names and CAIP-2
 NETWORK_V1_TO_CAIP = {
-    # SKALE Base networks
-    "skale-base": "eip155:1187947933",
-    "skale-base-sepolia": "eip155:324705682",
+    # Ethereum networks
+    "ethereum": "eip155:1",
+    "ethereum-mainnet": "eip155:1",
+    "ethereum-sepolia": "eip155:11155111",
     # Base networks
     "base": "eip155:8453",
     "base-mainnet": "eip155:8453",
     "base-sepolia": "eip155:84532",
-    # Other networks
-    "ethereum": "eip155:1",
-    "ethereum-mainnet": "eip155:1",
-    "arbitrum": "eip155:42161",
-    "optimism": "eip155:10",
-    "polygon": "eip155:137",
+    # SKALE Base networks
+    "skale-base": "eip155:1187947933",
+    "skale-base-sepolia": "eip155:324705682",
 }
 
 NETWORK_CAIP_TO_V1 = {v: k for k, v in NETWORK_V1_TO_CAIP.items()}
@@ -205,7 +203,7 @@ def decode_payment_required_header(header_value: str) -> tuple[dict, int, str]:
 class SigningRequest:
     """A request from an agent to sign an x402 payment."""
     id: str
-    agent_code: str
+    agent_id: str      # Short agent ID (user-facing, e.g., "ABC123")
     agent_name: str
     amount_micro: int  # Micro-USDC (6 decimals: 1_000_000 = $1.00)
     network: str
@@ -220,7 +218,7 @@ class SigningRequest:
     cache_key: Optional[str] = None  # Full cache key including payload hash
 
 
-class SigningService(QObject):
+class SigningService:
     """
     Handles x402 signing requests from agents.
 
@@ -229,27 +227,32 @@ class SigningService(QObject):
     2. Service looks up agent, validates it's commissioned
     3. Checks policy limits
     4. If under auto-approve: sign immediately
-    5. If over: queue for manual approval, emit signal
+    5. If over: queue for manual approval, call approval callback
 
     Idempotency:
     - Same signature = same request (retry) → return cached result
     - Different signature = new request → process normally
     - The signature includes a timestamp, so reusing signature = reusing timestamp
+
+    Callbacks (set via set_callbacks):
+    - on_approval_needed(request: SigningRequest)
+    - on_request_signed(agent_name, agent_id, wallet_id, amount_micro)
+    - on_request_rejected(agent_id, reason)
+    - on_activity(message, is_error)
+    - on_transaction_updated(transaction_id)
     """
 
-    approval_needed = pyqtSignal(object)  # SigningRequest
-    request_signed = pyqtSignal(str, str, str, int)  # agent_name, agent_code, wallet_id, amount_micro
-    request_rejected = pyqtSignal(str, str)  # agent_code, reason
-    activity = pyqtSignal(str, bool)  # message, is_error
-    transaction_updated = pyqtSignal(str)  # transaction_id - emitted when a transaction status changes
-    _verification_requested = pyqtSignal(object)  # Transaction - internal signal to marshal to main thread
-
     def __init__(self):
-        super().__init__()
         self._policy_store: Optional["PolicyStore"] = None
-        # Connect verification signal to handler (ensures it runs on main Qt thread)
-        self._verification_requested.connect(self._on_verification_requested)
+
+        # Callbacks (replace Qt signals)
+        self._on_approval_needed: Optional[Callable] = None
+        self._on_request_signed: Optional[Callable] = None
+        self._on_request_rejected: Optional[Callable] = None
+        self._on_activity: Optional[Callable] = None
+        self._on_transaction_updated: Optional[Callable] = None
         self._wallet_provider = None  # Function to get unlocked wallet by address
+        self._wallet_status_checker = None  # Function that returns True if any wallet is loaded
         self._pending_requests: dict[str, SigningRequest] = {}
         # Global network enable/disable (overrides policy-level settings)
         self._enabled_networks: dict[int, bool] = {
@@ -261,7 +264,7 @@ class SigningService(QObject):
         # Max age for signed requests (configurable, default 5 minutes)
         self._max_request_age_seconds = DEFAULT_MAX_REQUEST_AGE_SECONDS
         # Idempotency cache: cache_key → (transaction_id, cached_result)
-        # Cache key is "agent_code:signature" to prevent cross-agent pollution
+        # Cache key is "agent_id:signature" to prevent cross-agent pollution
         # Allows agents to retry with same signature and get same response
         self._signature_cache: dict[str, tuple[str, dict]] = {}
         # Request ID → cache_key mapping for status lookups
@@ -270,13 +273,62 @@ class SigningService(QObject):
         # Lock for spending limit updates to prevent race conditions
         self._spending_lock = threading.Lock()
 
+    def set_callbacks(
+        self,
+        on_approval_needed: Callable = None,
+        on_request_signed: Callable = None,
+        on_request_rejected: Callable = None,
+        on_activity: Callable = None,
+        on_transaction_updated: Callable = None
+    ):
+        """
+        Set callback functions for events.
+
+        These replace the old Qt signals. The GUI bridges these to Qt signals.
+        """
+        if on_approval_needed:
+            self._on_approval_needed = on_approval_needed
+        if on_request_signed:
+            self._on_request_signed = on_request_signed
+        if on_request_rejected:
+            self._on_request_rejected = on_request_rejected
+        if on_activity:
+            self._on_activity = on_activity
+        if on_transaction_updated:
+            self._on_transaction_updated = on_transaction_updated
+
+    def _emit_activity(self, message: str, is_error: bool = False):
+        """Emit activity event via callback."""
+        if self._on_activity:
+            self._on_activity(message, is_error)
+
+    def _emit_transaction_updated(self, transaction_id: str):
+        """Emit transaction updated event via callback."""
+        if self._on_transaction_updated:
+            self._on_transaction_updated(transaction_id)
+
+    def _emit_approval_needed(self, request: "SigningRequest"):
+        """Emit approval needed event via callback."""
+        if self._on_approval_needed:
+            self._on_approval_needed(request)
+
+    def _emit_request_signed(self, agent_name: str, agent_id: str, wallet_id: str, amount_micro: int):
+        """Emit request signed event via callback."""
+        if self._on_request_signed:
+            self._on_request_signed(agent_name, agent_id, wallet_id, amount_micro)
+
+    def _emit_request_rejected(self, agent_id: str, reason: str):
+        """Emit request rejected event via callback."""
+        if self._on_request_rejected:
+            self._on_request_rejected(agent_id, reason)
+
     def set_verify_settlements(self, enabled: bool):
         """Enable or disable on-chain verification of settlements."""
         self._verify_settlements = enabled
 
     def _make_cache_key(
         self,
-        agent_code: str,
+        agent_id: str,
         signature: str,
         payment_required: Optional[str] = None,
         x402_data: Optional[dict] = None,
@@ -286,7 +338,7 @@ class SigningService(QObject):
         Create a cache key for idempotency.
 
         For HMAC mode, the signature already includes a hash of the payload,
-        so agent_code:signature is sufficient for uniqueness.
+        so agent_id:signature is sufficient for uniqueness.
 
         For bearer mode, the signature (token) is static, so we must include
         either an idempotency_key (if provided) or a hash of the payload.
@@ -298,7 +350,7 @@ class SigningService(QObject):
         """
         # If idempotency_key provided, use it instead of payload hash
         if idempotency_key is not None:
-            return f"{agent_code}:{signature}:{idempotency_key}"
+            return f"{agent_id}:{signature}:{idempotency_key}"
 
         # Hash whichever payload format was provided
         if x402_data is not None:
@@ -306,14 +358,14 @@ class SigningService(QObject):
         elif payment_required is not None:
             payload_str = payment_required  # Already a string
         else:
-            return f"{agent_code}:{signature}"
+            return f"{agent_id}:{signature}"
 
         payload_hash = hashlib.sha256(payload_str.encode()).hexdigest()[:16]
-        return f"{agent_code}:{signature}:{payload_hash}"
+        return f"{agent_id}:{signature}:{payload_hash}"
 
     def _cache_result(
         self,
-        agent_code: str,
+        agent_id: str,
         signature: str,
         tx_id: str,
         result: dict,
@@ -323,7 +375,7 @@ class SigningService(QObject):
         idempotency_key: Optional[str] = None
     ) -> dict:
         """Cache a result for idempotency and return it."""
-        cache_key = self._make_cache_key(agent_code, signature, payment_required, x402_data, idempotency_key)
+        cache_key = self._make_cache_key(agent_id, signature, payment_required, x402_data, idempotency_key)
         self._signature_cache[cache_key] = (tx_id, result)
         # Also store request_id → cache_key mapping for status lookups
         if request_id:
@@ -361,7 +413,7 @@ class SigningService(QObject):
             if self._policy_store:
                 self._policy_store.update_agent(agent)
             if old_spent > 0:
-                logger.info(f"Reset daily spending for agent {agent.code}: was ${old_spent/1_000_000:.2f}")
+                logger.info(f"Reset daily spending for agent {agent.id}: was ${old_spent/1_000_000:.2f}")
             return True
         return False
 
@@ -369,14 +421,10 @@ class SigningService(QObject):
         """Queue a transaction for on-chain verification."""
         # Mark as pending verification
         tx.verification_status = "pending"
-        # Emit signal to run verification on main Qt thread (safe from HTTP server thread)
-        self._verification_requested.emit(tx)
-
-    def _on_verification_requested(self, tx: Transaction):
-        """Handle verification request on main Qt thread."""
-        from PyQt6.QtCore import QTimer
-        # Small delay to let any UI updates settle
-        QTimer.singleShot(1000, lambda: self._verify_transaction_sync(tx))
+        # Run verification in background thread after a short delay
+        timer = threading.Timer(1.0, lambda: self._verify_transaction_sync(tx))
+        timer.daemon = True
+        timer.start()
 
     def _verify_transaction_sync(self, tx: Transaction):
         """Synchronously verify a transaction on-chain. Updates tx in place."""
@@ -388,7 +436,7 @@ class SigningService(QObject):
                 tx.verification_status = "not_found"
                 if self._policy_store:
                     self._policy_store.update_transaction(tx)
-                self.transaction_updated.emit(tx.id)
+                self._emit_transaction_updated(tx.id)
                 return
 
             # Determine chain_id from transaction network
@@ -401,11 +449,11 @@ class SigningService(QObject):
                 chain_id = net.chain_id if net else None
 
             if not chain_id or chain_id not in NETWORKS:
-                self.activity.emit(f"Cannot verify tx: unknown network {network_str}", True)
+                self._emit_activity(f"Cannot verify tx: unknown network {network_str}", True)
                 tx.verification_status = "failed"
                 if self._policy_store:
                     self._policy_store.update_transaction(tx)
-                self.transaction_updated.emit(tx.id)
+                self._emit_transaction_updated(tx.id)
                 return
 
             network = NETWORKS[chain_id]
@@ -415,47 +463,45 @@ class SigningService(QObject):
             if receipt and receipt.get("status") == 1:
                 tx.verification_status = "verified"
                 tx.verification_block = receipt.get("blockNumber")
-                self.activity.emit(
+                self._emit_activity(
                     f"Verified on-chain: {tx.tx_hash[:10]}... (block {tx.verification_block})",
                     False
                 )
             elif receipt and receipt.get("status") == 0:
                 tx.verification_status = "failed"
-                self.activity.emit(
+                self._emit_activity(
                     f"Warning: tx {tx.tx_hash[:10]}... failed on-chain!",
                     True
                 )
             else:
                 tx.verification_status = "not_found"
-                self.activity.emit(
+                self._emit_activity(
                     f"Warning: tx {tx.tx_hash[:10]}... not found on-chain",
                     True
                 )
         except Exception as e:
             logger.warning(f"Transaction verification failed for {tx.tx_hash}: {e}")
-            self.activity.emit(f"Verification error: {e}", True)
+            self._emit_activity(f"Verification error: {e}", True)
             tx.verification_status = "failed"
 
         # Persist the verification result
         if self._policy_store:
             self._policy_store.update_transaction(tx)
-        self.transaction_updated.emit(tx.id)
+        self._emit_transaction_updated(tx.id)
 
     def verify_transaction(self, tx: Transaction):
         """Manually verify a transaction on-chain."""
         if tx.status != "settled" or not tx.tx_hash:
-            self.activity.emit("Can only verify settled transactions with tx_hash", True)
+            self._emit_activity("Can only verify settled transactions with tx_hash", True)
             return
 
-        from PyQt6.QtCore import QTimer
         tx.verification_status = "pending"
-        self.transaction_updated.emit(tx.id)
+        self._emit_transaction_updated(tx.id)
 
-        def verify():
-            self._verify_transaction_sync(tx)
-
-        # Small delay to let UI update
-        QTimer.singleShot(100, verify)
+        # Run verification in background thread after a short delay
+        timer = threading.Timer(0.1, lambda: self._verify_transaction_sync(tx))
+        timer.daemon = True
+        timer.start()
 
     def set_network_enabled(self, chain_id: int, enabled: bool):
         """Enable or disable a network globally (overrides policy settings)."""
@@ -478,7 +524,7 @@ class SigningService(QObject):
         stuck_count = 0
         for tx in self._policy_store.get_all_transactions():
             if tx.status == "settled" and tx.verification_status == "pending" and tx.tx_hash:
-                self._verification_requested.emit(tx)
+                self._queue_verification(tx)
                 stuck_count += 1
         if stuck_count:
             logger.info(f"Re-queued {stuck_count} stuck verification(s) from previous session")
@@ -486,6 +532,10 @@ class SigningService(QObject):
     def set_wallet_provider(self, provider):
         """Set the wallet provider function (gets unlocked wallet by address)."""
         self._wallet_provider = provider
+
+    def set_wallet_status_checker(self, checker):
+        """Set callable that returns True if any wallet is currently unlocked."""
+        self._wallet_status_checker = checker
 
     def _create_rejection_transaction(
         self,
@@ -520,13 +570,13 @@ class SigningService(QObject):
             tx.mandate_id = agent.intent_mandate.get("id")
         tx.mark_rejected(reason)
         self._policy_store.add_transaction(tx)
-        self.transaction_updated.emit(tx.id)
+        self._emit_transaction_updated(tx.id)
         return tx
 
     def _verify_agent_auth(
         self,
         agent: Agent,
-        agent_code: str,
+        agent_id: str,
         signature_header: str,
         wallet_password: str,
         payment_required: Optional[str] = None,
@@ -544,8 +594,8 @@ class SigningService(QObject):
 
         For HMAC mode:
         - The signature_header format is: "SIG:<timestamp>:<hex_signature>"
-        - Agent signs: HMAC-SHA256(JSON.stringify({agent_code, timestamp, payment_required}))
-        - Or: HMAC-SHA256(JSON.stringify({agent_code, timestamp, x402_data})) for AP2 format
+        - Agent signs: HMAC-SHA256(JSON.stringify({agent_id, timestamp, payment_required}))
+        - Or: HMAC-SHA256(JSON.stringify({agent_id, timestamp, x402_data})) for AP2 format
         - If request_url provided, it's included in the signed message
         - Verified with agent's decrypted shared secret
         - Timestamp checked for replay protection (5 minute window)
@@ -557,7 +607,7 @@ class SigningService(QObject):
 
         Args:
             agent: The agent making the request
-            agent_code: The agent's code (for message reconstruction)
+            agent_id: The agent's ID (for message reconstruction)
             signature_header: The SIG:timestamp:signature header OR "Bearer AT_..." token
             wallet_password: Password to decrypt agent's auth key (HMAC mode only)
             payment_required: Payment-Required header value (base64-encoded x402 payload)
@@ -610,13 +660,13 @@ class SigningService(QObject):
         # Reconstruct the signed message - use whichever format was provided
         if x402_data is not None:
             message_data = {
-                "agent_code": agent_code,
+                "agent_id": agent_id,
                 "timestamp": timestamp,
                 "x402_data": x402_data
             }
         else:
             message_data = {
-                "agent_code": agent_code,
+                "agent_id": agent_id,
                 "timestamp": timestamp,
                 "payment_required": payment_required
             }
@@ -641,14 +691,14 @@ class SigningService(QObject):
     def _verify_mandate_auth(
         self,
         agent: Agent,
-        agent_code: str,
+        agent_id: str,
         signature_header: str,
         wallet_password: str
     ) -> Optional[str]:
         """
         Verify agent authentication for /mandate endpoint.
 
-        Simpler than _verify_agent_auth - just signs over agent_code + timestamp.
+        Simpler than _verify_agent_auth - just signs over agent_id + timestamp.
 
         Returns None on success, error message on failure.
         """
@@ -693,10 +743,10 @@ class SigningService(QObject):
                 return "Request timestamp is in the future"
             return "Request expired (timestamp too old)"
 
-        # For /mandate, sign over just agent_code + timestamp + action
+        # For /mandate, sign over just agent_id + timestamp + action
         message_data = {
             "action": "get_mandate",
-            "agent_code": agent_code,
+            "agent_id": agent_id,
             "timestamp": timestamp,
         }
         message = json.dumps(message_data, separators=(',', ':'), sort_keys=True).encode('utf-8')
@@ -714,12 +764,12 @@ class SigningService(QObject):
 
         return None
 
-    def handle_ping(self, agent_code: str) -> dict:
+    def handle_ping(self, agent_id: str) -> dict:
         """Handle a ping/connection test from an agent."""
         if not self._policy_store:
             return {"status": "error", "error": "Service not ready", "code": "SERVICE_NOT_READY"}
 
-        agent = self._policy_store.get_agent_by_code(agent_code)
+        agent = self._policy_store.get_agent_by_id(agent_id)
         if not agent:
             return {
                 "status": "error",
@@ -758,7 +808,7 @@ class SigningService(QObject):
             "auto_approve_below_micro": policy.auto_approve_below_micro if policy else None
         }
 
-    def handle_get_mandate(self, agent_code: str, signature: str) -> dict:
+    def handle_get_mandate(self, agent_id: str, signature: str) -> dict:
         """
         Get an agent's Intent Mandate and policy summary.
 
@@ -770,7 +820,7 @@ class SigningService(QObject):
         if not self._policy_store:
             return {"status": "error", "error": "Service not ready", "code": "SERVICE_NOT_READY"}
 
-        agent = self._policy_store.get_agent_by_code(agent_code)
+        agent = self._policy_store.get_agent_by_id(agent_id)
         if not agent:
             return {"status": "error", "error": "Agent not found", "code": "AGENT_NOT_FOUND"}
 
@@ -797,14 +847,20 @@ class SigningService(QObject):
 
         wallet: "MultiClawWallet" = self._wallet_provider(agent.wallet_address)
         if not wallet:
+            if self._wallet_status_checker and self._wallet_status_checker():
+                return {
+                    "status": "error",
+                    "error": "Agent's wallet address is not available in the unlocked wallet. Check that the correct wallet is open.",
+                    "code": "WALLET_ADDRESS_NOT_FOUND"
+                }
             return {
                 "status": "error",
                 "error": "Wallet is locked. Open MultiClaw and unlock the wallet.",
                 "code": "WALLET_LOCKED"
             }
 
-        # Verify signature (for /mandate, we sign over just agent_code + timestamp)
-        auth_result = self._verify_mandate_auth(agent, agent_code, signature, wallet._password)
+        # Verify signature (for /mandate, we sign over just agent_id + timestamp)
+        auth_result = self._verify_mandate_auth(agent, agent_id, signature, wallet._password)
         if auth_result:
             return {
                 "status": "error",
@@ -834,7 +890,7 @@ class SigningService(QObject):
         result = {
             "status": "ok",
             "agent_name": agent.name,
-            "agent_code": agent.code,
+            "agent_id": agent.id,
             "spent_today_micro": agent.spent_today_micro,
             "remaining_today_micro": remaining_today_micro,
             "policy": policy_summary,
@@ -889,7 +945,7 @@ class SigningService(QObject):
 
     def handle_sign_request(
         self,
-        agent_code: str,
+        agent_id: str,
         signature: str,
         payment_required: Optional[str] = None,
         x402_data: Optional[dict] = None,
@@ -900,7 +956,7 @@ class SigningService(QObject):
         Handle a signing request from an agent.
 
         Args:
-            agent_code: The agent's short code (e.g., "ABC123")
+            agent_id: The agent's short ID (e.g., "ABC123")
             signature: HMAC-SHA256 signature in format "SIG:<timestamp>:<hex_signature>"
             payment_required: The Payment-Required header value (base64-encoded x402 payload)
             x402_data: Direct x402 payment requirements (AP2/A2A format)
@@ -926,7 +982,7 @@ class SigningService(QObject):
             return {"status": "error", "error": "Service not ready", "code": "SERVICE_NOT_READY"}
 
         # Build cache key early (needed for both lookup and storage)
-        cache_key = self._make_cache_key(agent_code, signature, payment_required, x402_data, idempotency_key)
+        cache_key = self._make_cache_key(agent_id, signature, payment_required, x402_data, idempotency_key)
 
         # Must have one of payment_required or x402_data
         if payment_required is None and x402_data is None:
@@ -950,9 +1006,9 @@ class SigningService(QObject):
                 "code": "INVALID_X402_DATA"
             }
 
-        agent = self._policy_store.get_agent_by_code(agent_code)
+        agent = self._policy_store.get_agent_by_id(agent_id)
         if not agent:
-            self.activity.emit(f"Unknown agent code: {agent_code}", True)
+            self._emit_activity(f"Unknown agent ID: {agent_id}", True)
             return {
                 "status": "error",
                 "error": "Agent not found",
@@ -964,7 +1020,7 @@ class SigningService(QObject):
 
         # Check agent status BEFORE auth (we need wallet for auth, and uncommissioned agents have no wallet)
         if agent.status == "uncommissioned":
-            self.activity.emit(f"Uncommissioned agent tried to sign: {agent.name}", True)
+            self._emit_activity(f"Uncommissioned agent tried to sign: {agent.name}", True)
             return {
                 "status": "error",
                 "error": "Agent not commissioned",
@@ -972,43 +1028,68 @@ class SigningService(QObject):
             }
 
         if agent.status == "suspended":
-            self.activity.emit(f"Suspended agent tried to sign: {agent.name}", True)
+            self._emit_activity(f"Suspended agent tried to sign: {agent.name}", True)
             return {
                 "status": "error",
                 "error": "Agent suspended",
                 "code": "AGENT_SUSPENDED"
             }
 
-        # Get wallet for auth verification (need password to decrypt agent's auth key)
+        # For bearer auth: verify token BEFORE wallet check — bearer doesn't need the wallet,
+        # so a wrong token should return AUTH_FAILED not WALLET_LOCKED.
+        if agent.auth_mode == "bearer":
+            auth_result = self._verify_agent_auth(
+                agent, agent_id, signature,
+                wallet_password=None,
+                payment_required=payment_required,
+                x402_data=x402_data,
+                request_url=request_url
+            )
+            if auth_result:
+                self._emit_activity(f"Auth failed for {agent.name}: {auth_result}", True)
+                return {
+                    "status": "error",
+                    "error": auth_result,
+                    "code": "AUTH_FAILED"
+                }
+
+        # Get wallet (needed for signing, and for HMAC auth key decryption)
         if not self._wallet_provider:
             return {"status": "error", "error": "Wallet provider not set", "code": "NO_WALLET_PROVIDER"}
 
         wallet: "MultiClawWallet" = self._wallet_provider(agent.wallet_address)
         if not wallet:
+            if self._wallet_status_checker and self._wallet_status_checker():
+                return {
+                    "status": "error",
+                    "error": "Agent's wallet address is not available in the unlocked wallet. Check that the correct wallet is open.",
+                    "code": "WALLET_ADDRESS_NOT_FOUND"
+                }
             return {
                 "status": "error",
                 "error": "Wallet is locked. Open MultiClaw and unlock the wallet to enable signing.",
                 "code": "WALLET_LOCKED"
             }
 
-        # Verify agent authentication using HMAC
-        auth_result = self._verify_agent_auth(
-            agent, agent_code, signature,
-            wallet_password=wallet._password,
-            payment_required=payment_required,
-            x402_data=x402_data,
-            request_url=request_url
-        )
-        if auth_result:
-            self.activity.emit(f"Auth failed for {agent.name}: {auth_result}", True)
-            return {
-                "status": "error",
-                "error": auth_result,
-                "code": "AUTH_FAILED"
-            }
+        # For HMAC auth: verify signature (needs wallet password to decrypt auth key)
+        if agent.auth_mode != "bearer":
+            auth_result = self._verify_agent_auth(
+                agent, agent_id, signature,
+                wallet_password=wallet._password,
+                payment_required=payment_required,
+                x402_data=x402_data,
+                request_url=request_url
+            )
+            if auth_result:
+                self._emit_activity(f"Auth failed for {agent.name}: {auth_result}", True)
+                return {
+                    "status": "error",
+                    "error": auth_result,
+                    "code": "AUTH_FAILED"
+                }
 
         if agent.status == "limit_reached":
-            self.activity.emit(f"Agent at limit tried to sign: {agent.name}", True)
+            self._emit_activity(f"Agent at limit tried to sign: {agent.name}", True)
             return {
                 "status": "error",
                 "error": "Daily limit reached",
@@ -1038,7 +1119,7 @@ class SigningService(QObject):
                     tx.verification_status == "verified"  # We verified on-chain
                 )
                 if nonce_spent:
-                    logger.info(f"Rejecting cached result for {agent_code} - nonce already spent (tx: {tx_id[:8]}...)")
+                    logger.info(f"Rejecting cached result for {agent_id} - nonce already spent (tx: {tx_id[:8]}...)")
                     return {
                         "status": "error",
                         "code": "PAYMENT_ALREADY_SETTLED",
@@ -1048,7 +1129,7 @@ class SigningService(QObject):
                     }
 
             # Not settled - safe to return cached result for retries
-            logger.info(f"Returning cached result for {agent_code} (tx: {tx_id[:8]}...)")
+            logger.info(f"Returning cached result for {agent_id} (tx: {tx_id[:8]}...)")
             return cached_result
 
         # Handle the two input formats
@@ -1056,7 +1137,7 @@ class SigningService(QObject):
             # AP2/A2A format: x402 data provided directly as JSON
             is_valid, x402_version, validation_error = validate_x402_request(x402_data)
             if not is_valid:
-                self.activity.emit(f"Invalid x402 from {agent.name}: {validation_error}", True)
+                self._emit_activity(f"Invalid x402 from {agent.name}: {validation_error}", True)
                 server_stats.rejected += 1
                 return {
                     "status": "error",
@@ -1068,7 +1149,7 @@ class SigningService(QObject):
             # HTTP 402 format: decode from Payment-Required header value
             decoded_x402_data, detected_version, decode_error = decode_payment_required_header(payment_required)
             if decode_error:
-                self.activity.emit(f"Failed to decode payment_required from {agent.name}: {decode_error}", True)
+                self._emit_activity(f"Failed to decode payment_required from {agent.name}: {decode_error}", True)
                 server_stats.rejected += 1
                 return {
                     "status": "error",
@@ -1079,7 +1160,7 @@ class SigningService(QObject):
             # Validate the decoded x402 data
             is_valid, x402_version, validation_error = validate_x402_request(decoded_x402_data)
             if not is_valid:
-                self.activity.emit(f"Invalid x402 from {agent.name}: {validation_error}", True)
+                self._emit_activity(f"Invalid x402 from {agent.name}: {validation_error}", True)
                 server_stats.rejected += 1
                 return {
                     "status": "error",
@@ -1113,7 +1194,7 @@ class SigningService(QObject):
         if chain_id and not self.is_network_enabled(chain_id):
             network_name = network_to_v1(caip_network)
             reason = f"Network {network_name} is disabled"
-            self.activity.emit(f"Request from {agent.name} rejected: {reason}", True)
+            self._emit_activity(f"Request from {agent.name} rejected: {reason}", True)
             server_stats.rejected += 1
             # Create rejection receipt for audit trail
             tx = self._create_rejection_transaction(
@@ -1127,6 +1208,25 @@ class SigningService(QObject):
                 "transaction_id": tx.id
             }
 
+        # Check if network is allowed by policy (policy-level restriction)
+        if chain_id and policy.networks and chain_id not in policy.networks:
+            network_name = network_to_v1(caip_network)
+            allowed_names = [network_to_v1(f"eip155:{cid}") for cid in policy.networks]
+            reason = f"Network {network_name} not allowed by policy (allowed: {', '.join(allowed_names)})"
+            self._emit_activity(f"Request from {agent.name} rejected: {reason}", True)
+            server_stats.rejected += 1
+            # Create rejection receipt for audit trail
+            tx = self._create_rejection_transaction(
+                agent, amount_micro, network, recipient, reason, resource, decoded_x402_data,
+                request_url=request_url
+            )
+            return {
+                "status": "error",
+                "error": reason,
+                "code": "NETWORK_NOT_ALLOWED_BY_POLICY",
+                "transaction_id": tx.id
+            }
+
         # Check domain restrictions
         # Use request_url if provided (agent tells us where they got the 402),
         # otherwise fall back to x402 resource field
@@ -1134,7 +1234,7 @@ class SigningService(QObject):
         # If policy has domain restrictions but no URL to check, reject
         if policy.has_domain_restrictions() and not domain_check_url:
             reason = "Domain restrictions configured but no URL provided (include request_url or resource)"
-            self.activity.emit(f"Request from {agent.name} rejected: {reason}", True)
+            self._emit_activity(f"Request from {agent.name} rejected: {reason}", True)
             server_stats.rejected += 1
             tx = self._create_rejection_transaction(
                 agent, amount_micro, network, recipient, reason, resource, decoded_x402_data,
@@ -1148,7 +1248,7 @@ class SigningService(QObject):
             }
         domain_allowed, domain_reason = policy.check_domain_allowed(domain_check_url)
         if not domain_allowed:
-            self.activity.emit(f"Request from {agent.name} rejected: {domain_reason}", True)
+            self._emit_activity(f"Request from {agent.name} rejected: {domain_reason}", True)
             server_stats.rejected += 1
             # Create rejection receipt for audit trail
             tx = self._create_rejection_transaction(
@@ -1164,7 +1264,7 @@ class SigningService(QObject):
 
         if policy.per_request_max_micro and amount_micro > policy.per_request_max_micro:
             reason = f"Exceeds per-request maximum (${amount_micro/1_000_000:.2f} > ${policy.per_request_max_micro/1_000_000:.2f} USDC)"
-            self.activity.emit(f"Request from {agent.name}: {reason}", True)
+            self._emit_activity(f"Request from {agent.name}: {reason}", True)
             server_stats.rejected += 1
             # Create rejection receipt for audit trail
             tx = self._create_rejection_transaction(
@@ -1184,7 +1284,7 @@ class SigningService(QObject):
             remaining = policy.daily_limit_micro - agent.spent_today_micro
             if amount_micro > remaining:
                 reason = f"Would exceed daily limit (${amount_micro/1_000_000:.2f} > ${remaining/1_000_000:.2f} USDC remaining)"
-                self.activity.emit(f"Request from {agent.name}: {reason}", True)
+                self._emit_activity(f"Request from {agent.name}: {reason}", True)
                 server_stats.rejected += 1
                 # Create rejection receipt for audit trail
                 tx = self._create_rejection_transaction(
@@ -1209,7 +1309,7 @@ class SigningService(QObject):
             request_id = str(uuid.uuid4())
             request = SigningRequest(
                 id=request_id,
-                agent_code=agent_code,
+                agent_id=agent_id,
                 agent_name=agent.name,
                 amount_micro=amount_micro,
                 network=network,
@@ -1226,11 +1326,11 @@ class SigningService(QObject):
             request.cache_key = cache_key  # Full cache key including payload hash
             self._pending_requests[request_id] = request
 
-            self.activity.emit(
+            self._emit_activity(
                 f"Payment request from {agent.name}: ${amount_micro/1_000_000:.2f} USDC - awaiting approval",
                 False
             )
-            self.approval_needed.emit(request)
+            self._emit_approval_needed(request)
 
             result = {
                 "status": "pending",
@@ -1240,7 +1340,7 @@ class SigningService(QObject):
             }
             # Cache pending result so retries get same request_id
             return self._cache_result(
-                agent_code, signature, request_id, result,
+                agent_id, signature, request_id, result,
                 request_id=request_id, payment_required=payment_required, x402_data=x402_data,
                 idempotency_key=idempotency_key
             )
@@ -1253,7 +1353,7 @@ class SigningService(QObject):
         # Cache successful result so retries get same response
         tx_id = result.get("transaction_id", "unknown")
         return self._cache_result(
-            agent_code, signature, tx_id, result,
+            agent_id, signature, tx_id, result,
             payment_required=payment_required, x402_data=x402_data,
             idempotency_key=idempotency_key
         )
@@ -1267,25 +1367,25 @@ class SigningService(QObject):
         if request.status != "pending":
             return {"status": "error", "error": f"Request already {request.status}", "code": "REQUEST_ALREADY_PROCESSED"}
 
-        agent = self._policy_store.get_agent_by_code(request.agent_code)
+        agent = self._policy_store.get_agent_by_id(request.agent_id)
         policy = self._policy_store.get_policy(agent.policy_id) if agent else None
 
         if not agent or not policy:
-            request.status = "rejected"
+            del self._pending_requests[request_id]
             return {"status": "error", "error": "Agent or policy no longer exists", "code": "AGENT_OR_POLICY_MISSING"}
 
         # Re-validate agent status (may have changed since request was queued)
         if agent.status == "suspended":
-            request.status = "rejected"
+            del self._pending_requests[request_id]
             return {"status": "error", "error": "Agent is now suspended", "code": "AGENT_SUSPENDED"}
 
         if agent.status == "limit_reached":
-            request.status = "rejected"
+            del self._pending_requests[request_id]
             return {"status": "error", "error": "Agent has reached daily limit", "code": "LIMIT_REACHED"}
 
         # Re-validate policy limits (may have changed since request was queued)
         if policy.per_request_max_micro and request.amount_micro > policy.per_request_max_micro:
-            request.status = "rejected"
+            del self._pending_requests[request_id]
             return {
                 "status": "error",
                 "error": f"Amount ${request.amount_micro/1_000_000:.2f} exceeds current per-request limit ${policy.per_request_max_micro/1_000_000:.2f}",
@@ -1295,7 +1395,7 @@ class SigningService(QObject):
         if policy.daily_limit_micro:
             remaining = policy.daily_limit_micro - agent.spent_today_micro
             if request.amount_micro > remaining:
-                request.status = "rejected"
+                del self._pending_requests[request_id]
                 return {
                     "status": "error",
                     "error": f"Amount ${request.amount_micro/1_000_000:.2f} exceeds remaining daily limit ${remaining/1_000_000:.2f}",
@@ -1311,11 +1411,20 @@ class SigningService(QObject):
             chain_id = 0
 
         if chain_id and not self.is_network_enabled(chain_id):
-            request.status = "rejected"
+            del self._pending_requests[request_id]
             return {
                 "status": "error",
                 "error": f"Network {network} is no longer enabled",
                 "code": "NETWORK_DISABLED"
+            }
+
+        # Re-validate network is allowed by policy (may have changed)
+        if chain_id and policy.networks and chain_id not in policy.networks:
+            del self._pending_requests[request_id]
+            return {
+                "status": "error",
+                "error": f"Network {network} is no longer allowed by policy",
+                "code": "NETWORK_NOT_ALLOWED_BY_POLICY"
             }
 
         result = self._sign_payment(
@@ -1332,7 +1441,10 @@ class SigningService(QObject):
                 self._signature_cache[request.cache_key] = (tx_id, result)
             del self._pending_requests[request_id]
         else:
-            request.status = "rejected"
+            # Signing failed — clean up so the operator can retry
+            if request.cache_key and request.cache_key in self._signature_cache:
+                del self._signature_cache[request.cache_key]
+            del self._pending_requests[request_id]
 
         return result
 
@@ -1345,7 +1457,7 @@ class SigningService(QObject):
         request.status = "rejected"
 
         # Get agent for transaction record
-        agent = self._policy_store.get_agent_by_code(request.agent_code)
+        agent = self._policy_store.get_agent_by_id(request.agent_id)
         if agent:
             # Create a rejection receipt for audit trail
             tx = self._create_rejection_transaction(
@@ -1357,8 +1469,8 @@ class SigningService(QObject):
         else:
             tx_id = request_id
 
-        self.activity.emit(f"Rejected payment from {request.agent_name}: {reason}", False)
-        self.request_rejected.emit(request.agent_code, reason)
+        self._emit_activity(f"Rejected payment from {request.agent_name}: {reason}", False)
+        self._emit_request_rejected(request.agent_id, reason)
         server_stats.rejected += 1
 
         result = {"status": "rejected", "reason": reason, "transaction_id": tx_id}
@@ -1390,7 +1502,7 @@ class SigningService(QObject):
                 "request_id": request_id,
                 "code": "APPROVAL_REQUIRED",
                 "amount_micro": request.amount_micro,
-                "agent_code": request.agent_code,
+                "agent_id": request.agent_id,
                 "created_at": request.created_at
             }
 
@@ -1467,6 +1579,23 @@ class SigningService(QObject):
             resource = accepts[0].get("resource") if accepts else None
             caip_network = network_to_caip(original_network)
 
+            # Validate Ethereum addresses before attempting to sign
+            _eth_addr_re = re.compile(r'^0x[0-9a-fA-F]{40}$')
+            if accepts:
+                for field, addr in [("payTo", recipient),
+                                     ("asset", accepts[0].get("asset", ""))]:
+                    if addr and not _eth_addr_re.match(addr):
+                        hex_len = len(addr) - 2 if addr.startswith("0x") else len(addr)
+                        return {
+                            "status": "error",
+                            "error": (
+                                f"Invalid {field} address in payment_required: "
+                                f"'{addr}' is not a valid Ethereum address "
+                                f"(expected 40 hex characters, got {hex_len})"
+                            ),
+                            "code": "INVALID_PAYMENT_DATA"
+                        }
+
             sdk_data = {
                 "x402Version": 2,
                 "accepts": [{
@@ -1529,13 +1658,13 @@ class SigningService(QObject):
                 tx.mark_signed(agent.wallet_address, wallet_id, auto_approved)
 
             self._policy_store.add_transaction(tx)
-            self.transaction_updated.emit(tx.id)
+            self._emit_transaction_updated(tx.id)
 
-            self.activity.emit(
-                f"Signed ${amount_micro/1_000_000:.2f} USDC payment for {agent.name} ({agent.code}) from {wallet_id}",
+            self._emit_activity(
+                f"Signed ${amount_micro/1_000_000:.2f} USDC payment for {agent.name} ({agent.id}) from {wallet_id}",
                 False
             )
-            self.request_signed.emit(agent.name, agent.code, wallet_id, amount_micro)
+            self._emit_request_signed(agent.name, agent.id, wallet_id, amount_micro)
             server_stats.signed += 1
 
             # Encode payment as base64 for the header value
@@ -1558,7 +1687,7 @@ class SigningService(QObject):
 
         except Exception as e:
             logger.error(f"Signing error: {e}", exc_info=True)
-            self.activity.emit(f"Signing error: {e}", True)
+            self._emit_activity(f"Signing error: {e}", True)
             return {
                 "status": "error",
                 "error": "Payment signing failed",
@@ -1577,7 +1706,7 @@ class SigningService(QObject):
 
     def handle_callback(
         self,
-        agent_code: str,
+        agent_id: str,
         transaction_id: str,
         event: str,
         tx_hash: Optional[str] = None,
@@ -1587,7 +1716,7 @@ class SigningService(QObject):
         Handle a callback from an agent reporting transaction status.
 
         Args:
-            agent_code: The agent's code
+            agent_id: The agent's ID
             transaction_id: The transaction ID from the sign response
             event: One of 'submitted', 'settled', 'failed'
             tx_hash: Transaction hash (required for 'settled')
@@ -1600,7 +1729,7 @@ class SigningService(QObject):
             return {"status": "error", "error": "Service not ready", "code": "SERVICE_NOT_READY"}
 
         # Verify agent exists
-        agent = self._policy_store.get_agent_by_code(agent_code)
+        agent = self._policy_store.get_agent_by_id(agent_id)
         if not agent:
             return {"status": "error", "error": "Agent not found", "code": "AGENT_NOT_FOUND"}
 
@@ -1609,14 +1738,14 @@ class SigningService(QObject):
         if not tx:
             return {"status": "error", "error": "Transaction not found", "code": "TRANSACTION_NOT_FOUND"}
 
-        # Verify this agent owns the transaction
-        if tx.agent_code != agent_code:
+        # Verify this agent owns the transaction (check agent_id which is the short ID)
+        if tx.agent_id != agent_id:
             return {"status": "error", "error": "Transaction does not belong to this agent", "code": "UNAUTHORIZED"}
 
         # Update transaction status based on event
         if event == "submitted":
             tx.mark_submitted()
-            self.activity.emit(
+            self._emit_activity(
                 f"Agent {agent.name} submitted payment to target API ({transaction_id[:8]})",
                 False
             )
@@ -1627,7 +1756,7 @@ class SigningService(QObject):
             if not re.match(r'^0x[a-fA-F0-9]{64}$', tx_hash):
                 return {"status": "error", "error": "Invalid tx_hash format", "code": "INVALID_TX_HASH"}
             tx.mark_settled(tx_hash)
-            self.activity.emit(
+            self._emit_activity(
                 f"Payment settled for {agent.name}: {tx.format_amount()} (tx: {tx_hash[:10]}...)",
                 False
             )
@@ -1636,7 +1765,7 @@ class SigningService(QObject):
                 self._queue_verification(tx)
         elif event == "failed":
             tx.mark_failed(error)
-            self.activity.emit(
+            self._emit_activity(
                 f"Payment failed for {agent.name}: {error or 'Unknown error'}",
                 True
             )
@@ -1644,7 +1773,7 @@ class SigningService(QObject):
             return {"status": "error", "error": f"Unknown event: {event}", "code": "INVALID_EVENT"}
 
         self._policy_store.update_transaction(tx)
-        self.transaction_updated.emit(tx.id)
+        self._emit_transaction_updated(tx.id)
 
         return {"status": "ok", "transaction_id": tx.id, "new_status": tx.status}
 
@@ -1672,7 +1801,7 @@ class SigningService(QObject):
             return {"status": "error", "error": "Transaction not found", "code": "TRANSACTION_NOT_FOUND"}
 
         # Get policy name for the receipt
-        agent = self._policy_store.get_agent(tx.agent_id)
+        agent = self._policy_store.get_agent_by_id(tx.agent_id)
         policy = self._policy_store.get_policy(agent.policy_id) if agent else None
         policy_name = policy.name if policy else None
 
@@ -1710,7 +1839,3 @@ class SigningService(QObject):
             raise ValueError(f"maxAmountRequired exceeds maximum ({amount_micro} > 10^15)")
 
         return amount_micro
-
-
-# Global signing service instance
-signing_service = SigningService()

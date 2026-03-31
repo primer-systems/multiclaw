@@ -39,8 +39,8 @@ ARGON2_HASH_LEN = 32  # 256 bits for AES-256
 AES_IV_SIZE = 12  # 96 bits (recommended for GCM)
 
 
-def generate_agent_code() -> str:
-    """Generate a short, readable agent code (6 chars: 3 letters + 3 digits)."""
+def generate_agent_id() -> str:
+    """Generate a short, readable agent ID (6 chars: 3 letters + 3 digits)."""
     letters = ''.join(secrets.choice(string.ascii_uppercase) for _ in range(3))
     digits = ''.join(secrets.choice(string.digits) for _ in range(3))
     return letters + digits
@@ -140,14 +140,14 @@ def _derive_key(password: str, salt: bytes) -> bytes:
     )
 
 
-def encrypt_agent_secret(shared_secret_hex: str, password: str, agent_code: str) -> tuple[str, str, str, str]:
+def encrypt_agent_secret(shared_secret_hex: str, password: str, agent_id: str) -> tuple[str, str, str, str]:
     """
     Encrypt an agent's shared secret with a password.
 
     Args:
         shared_secret_hex: The shared secret to encrypt (hex string)
         password: The encryption password (typically wallet password)
-        agent_code: The agent code, used as AAD to bind ciphertext to this agent
+        agent_id: The agent ID, used as AAD to bind ciphertext to this agent
 
     Returns:
         (encrypted_hex, iv_hex, tag_hex, salt_hex)
@@ -156,9 +156,9 @@ def encrypt_agent_secret(shared_secret_hex: str, password: str, agent_code: str)
     key = _derive_key(password, salt)
     iv = secrets.token_bytes(AES_IV_SIZE)
 
-    # Use agent_code as Associated Authenticated Data (AAD) for domain separation
+    # Use agent_id as Associated Authenticated Data (AAD) for domain separation
     # This ensures the ciphertext can only be decrypted for this specific agent
-    aad = agent_code.encode('utf-8')
+    aad = agent_id.encode('utf-8')
 
     aesgcm = AESGCM(key)
     ciphertext_and_tag = aesgcm.encrypt(iv, shared_secret_hex.encode('utf-8'), aad)
@@ -175,7 +175,7 @@ def decrypt_agent_secret(
     tag_hex: str,
     salt_hex: str,
     password: str,
-    agent_code: str
+    agent_id: str
 ) -> str:
     """
     Decrypt an agent's shared secret.
@@ -186,13 +186,13 @@ def decrypt_agent_secret(
         tag_hex: AES-GCM auth tag (hex string)
         salt_hex: Argon2id salt (hex string)
         password: The encryption password
-        agent_code: The agent code, used as AAD (must match encryption)
+        agent_id: The agent ID, used as AAD (must match encryption)
 
     Returns:
         The decrypted shared secret (hex string)
 
     Raises:
-        Exception if password is wrong, agent_code doesn't match, or data is corrupted
+        Exception if password is wrong, agent_id doesn't match, or data is corrupted
     """
     salt = bytes.fromhex(salt_hex)
     key = _derive_key(password, salt)
@@ -202,8 +202,8 @@ def decrypt_agent_secret(
     tag = bytes.fromhex(tag_hex)
     ciphertext_and_tag = ciphertext + tag
 
-    # Use agent_code as AAD - must match what was used during encryption
-    aad = agent_code.encode('utf-8')
+    # Use agent_id as AAD - must match what was used during encryption
+    aad = agent_id.encode('utf-8')
 
     aesgcm = AESGCM(key)
     plaintext = aesgcm.decrypt(iv, ciphertext_and_tag, aad)
@@ -242,10 +242,10 @@ def generate_intent_mandate(
         "issuedAt": datetime.now(timezone.utc).isoformat(),
 
         # Agent authorization
-        # Privacy: We omit agent.name and agent.id to avoid leaking organizational info.
-        # Only include code (lookup key) and auth fingerprint (for identification).
+        # Privacy: We omit agent.name and agent.code to avoid leaking organizational info.
+        # Only include id (lookup key) and auth fingerprint (for identification).
         "agent": {
-            "code": agent.code,
+            "id": agent.id,
             "authKeyFingerprint": hashlib.sha256(agent.auth_key.encode()).hexdigest()[:16],
         },
 
@@ -265,7 +265,7 @@ def generate_intent_mandate(
             },
 
             # Network restrictions (required for chain validation)
-            "networks": [f"eip155:{chain_id}" for chain_id in policy.networks],
+            "networks": [f"eip155:{chain_id}" for chain_id in (policy.networks or [])],
         },
 
         # Signing wallet
@@ -328,9 +328,9 @@ class Agent:
     For HMAC mode, the secret is encrypted at rest using AES-256-GCM with
     Argon2id key derivation, using the wallet password as the encryption key.
     """
-    id: str
+    id: str                          # Short agent ID for API use (e.g., "ABC123")
     name: str
-    code: str                        # Short agent code for API use (e.g., "ABC123")
+    code: str                        # Internal UUID for storage
     auth_key: str                    # HMAC: encrypted shared secret | Bearer: sha256(token)
     status: str                      # uncommissioned | active | suspended | limit_reached
     created_at: str
@@ -361,7 +361,7 @@ class Agent:
         auth_key_tag: Optional[str] = None,
         auth_key_salt: Optional[str] = None,
         auth_mode: str = "hmac",
-        code: Optional[str] = None
+        agent_id: Optional[str] = None
     ) -> "Agent":
         """
         Create a new uncommissioned agent.
@@ -373,12 +373,12 @@ class Agent:
             auth_key_tag: AES-GCM auth tag (hex) - required for HMAC mode
             auth_key_salt: Argon2id salt (hex) - required for HMAC mode
             auth_mode: "hmac" (default, more secure) or "bearer" (simpler, less secure)
-            code: Optional pre-generated agent code (required for HMAC mode AAD)
+            agent_id: Optional pre-generated agent ID (required for HMAC mode AAD)
         """
         return cls(
-            id=str(uuid.uuid4()),
+            id=agent_id if agent_id else generate_agent_id(),
             name=name,
-            code=code if code else generate_agent_code(),
+            code=str(uuid.uuid4()),
             auth_key=encrypted_auth_key,
             status="uncommissioned",
             created_at=datetime.now(timezone.utc).isoformat(),
@@ -449,7 +449,7 @@ class Agent:
 
         Raises:
             ValueError if encryption metadata is missing
-            Exception if password is wrong or agent_code doesn't match
+            Exception if password is wrong or agent_id doesn't match
         """
         if not self.auth_key_iv or not self.auth_key_tag or not self.auth_key_salt:
             raise ValueError("Agent auth key encryption metadata is missing")
@@ -460,6 +460,6 @@ class Agent:
             self.auth_key_tag,
             self.auth_key_salt,
             password,
-            self.code
+            self.id
         )
 

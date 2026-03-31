@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, asdict
 
+from utils import validate_name
+
 # Cryptography
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from argon2.low_level import hash_secret_raw, Type
@@ -340,7 +342,7 @@ class Wallet:
             }
 
         temp_path = filepath.with_suffix('.tmp')
-        with open(temp_path, 'w') as f:
+        with open(temp_path, 'w', encoding='utf-8') as f:
             json.dump(wallet_data, f, indent=2)
 
         temp_path.replace(filepath)
@@ -359,7 +361,7 @@ class Wallet:
         """
         filepath = Path(filepath)
 
-        with open(filepath, 'r') as f:
+        with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
         if data.get("version") != 1:
@@ -401,7 +403,7 @@ class Wallet:
         if not filepath.exists():
             return True  # Assume encrypted for non-existent files
         try:
-            with open(filepath, 'r') as f:
+            with open(filepath, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             return data.get("encrypted", True)  # Default to encrypted
         except (json.JSONDecodeError, IOError):
@@ -583,7 +585,7 @@ class PrivateKeyWallet:
             }
 
         temp_path = filepath.with_suffix('.tmp')
-        with open(temp_path, 'w') as f:
+        with open(temp_path, 'w', encoding='utf-8') as f:
             json.dump(wallet_data, f, indent=2)
 
         temp_path.replace(filepath)
@@ -594,7 +596,7 @@ class PrivateKeyWallet:
         """Load wallet from file (handles encrypted and unencrypted)."""
         filepath = Path(filepath)
 
-        with open(filepath, 'r') as f:
+        with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
         if data.get("type") != "private_key":
@@ -650,7 +652,7 @@ def load_wallet(filepath: str | Path, password: str = None) -> Wallet | PrivateK
     """
     filepath = Path(filepath)
 
-    with open(filepath, 'r') as f:
+    with open(filepath, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
     if data.get("type") == "private_key":
@@ -665,7 +667,7 @@ def is_wallet_encrypted(filepath: str | Path) -> bool:
     if not filepath.exists():
         return True  # Assume encrypted for non-existent files
     try:
-        with open(filepath, 'r') as f:
+        with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
         return data.get("encrypted", True)  # Default to encrypted
     except (json.JSONDecodeError, IOError):
@@ -916,6 +918,10 @@ class MultiClawWallet:
         if seed_id not in self._seeds:
             raise ValueError(f"Unknown seed: {seed_id}")
 
+        # Validate custom name if provided
+        if name:
+            validate_name(name, "Address name")
+
         # Check if this address already exists
         for addr in self._addresses.values():
             if addr.seed_id == seed_id and addr.index == index:
@@ -947,6 +953,10 @@ class MultiClawWallet:
         Returns:
             Address ID (e.g., "A001")
         """
+        # Validate custom name if provided
+        if name:
+            validate_name(name, "Address name")
+
         pkey = private_key.strip()
         if pkey.startswith("0x") or pkey.startswith("0X"):
             pkey = pkey[2:]
@@ -985,6 +995,7 @@ class MultiClawWallet:
         """Rename an address."""
         if address_id not in self._addresses:
             raise ValueError(f"Unknown address: {address_id}")
+        validate_name(new_name, "Address name")
         self._addresses[address_id].name = new_name
 
     def remove_address(self, address_id: str) -> None:
@@ -1091,7 +1102,7 @@ class MultiClawWallet:
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
         temp_path = filepath.with_suffix('.tmp')
-        with open(temp_path, 'w') as f:
+        with open(temp_path, 'w', encoding='utf-8') as f:
             json.dump(wallet_data, f, indent=2)
 
         temp_path.replace(filepath)
@@ -1108,7 +1119,7 @@ class MultiClawWallet:
         """
         filepath = Path(filepath)
 
-        with open(filepath, 'r') as f:
+        with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
         version = data.get("version", 1)
@@ -1188,7 +1199,7 @@ class MultiClawWallet:
         if not filepath.exists():
             return True
         try:
-            with open(filepath, 'r') as f:
+            with open(filepath, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             return data.get("encrypted", True)
         except (json.JSONDecodeError, IOError):

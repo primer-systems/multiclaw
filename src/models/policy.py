@@ -69,6 +69,10 @@ class SpendPolicy:
         if auto_approve is not None and (not isinstance(auto_approve, int) or auto_approve < 0):
             raise ValueError(f"auto_approve_below_micro must be non-negative integer, got {auto_approve}")
 
+        # Ensure networks is a list (handle None or missing)
+        if data.get("networks") is None:
+            data["networks"] = []
+
         return cls(**data)
 
     def check_domain_allowed(self, resource_url: str) -> tuple[bool, str]:

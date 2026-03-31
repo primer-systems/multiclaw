@@ -27,17 +27,18 @@ from .dialogs import (
     AgentRegistrationDialog, CommissionDialog, EditAgentDialog,
     NewPolicyDialog
 )
-from models import SpendPolicy, Agent, Transaction, PolicyStore
-from wallet import (
-    MultiClawWallet, AddressEntry,
+from models import SpendPolicy, Agent, Transaction
+from wallet import MultiClawWallet, AddressEntry, NO_PASSWORD_SENTINEL
+from wallet.dialogs import (
     AddAddressDialog, SeedSelectionDialog, DerivationBrowserDialog,
     NewSeedDialog, ImportSeedToWalletDialog, ImportPrivateKeyToWalletDialog,
-    MultiClawWalletUnlockDialog, CreateWalletWizard, NO_PASSWORD_SENTINEL,
+    MultiClawWalletUnlockDialog, CreateWalletWizard,
     AddWalletChoiceDialog, WalletFilenameDialog,
 )
-from services import agent_server
+# agent_server is now passed to NetworkTab constructor
 from networks import NETWORKS, DEFAULT_NETWORK, MultiNetworkBalanceFetcher, format_address, Balance
-from utils import get_app_dir, get_wallet_dir
+# Note: Do NOT import get_wallet_dir or get_app_dir here. Use core methods instead.
+# See ARCHITECTURE.md "Common Mistakes" section.
 
 # MultiClaw wallet filename
 MULTICLAW_WALLET_FILE = "multiclaw.wallet"
@@ -80,10 +81,13 @@ class PoliciesTab(QWidget):
     policy_deleted = pyqtSignal(str, list)  # policy_id, list of decommissioned agent names
     activity = pyqtSignal(str, bool)  # message, is_error
 
-    def __init__(self, store: PolicyStore = None):
+    def __init__(self, core):
+        """
+        Args:
+            core: MultiClaw core instance
+        """
         super().__init__()
-
-        self.store = store or PolicyStore(get_app_dir())
+        self.core = core
 
         layout = QVBoxLayout(self)
 
@@ -123,14 +127,14 @@ class PoliciesTab(QWidget):
 
     def populate_table(self):
         """Refresh the table with current policies."""
-        policies = self.store.get_all_policies()
+        policies = self.core.get_all_policies()
         self.table.setRowCount(len(policies))
 
         for row, policy in enumerate(policies):
             self.table.setItem(row, 0, QTableWidgetItem(policy.name))
 
             network_names = []
-            for chain_id in policy.networks:
+            for chain_id in (policy.networks or []):
                 network = NETWORKS.get(chain_id)
                 if network:
                     network_names.append(network.display_name)
@@ -158,30 +162,37 @@ class PoliciesTab(QWidget):
 
     def add_policy(self):
         """Show dialog to create a new policy."""
-        dialog = NewPolicyDialog(self)
+        dialog = NewPolicyDialog(self, core=self.core)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            policy = dialog.get_policy()
-            self.store.add_policy(policy)
+            policy_data = dialog.get_policy_data()
+            policy = self.core.create_policy(**policy_data)
             self.populate_table()
             self.policy_changed.emit()
             self.activity.emit(f"Policy '{policy.name}' created", False)
 
     def edit_policy(self, policy: SpendPolicy):
         """Show dialog to edit an existing policy."""
-        dialog = NewPolicyDialog(self, policy)
+        dialog = NewPolicyDialog(self, policy, core=self.core)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            updated = dialog.get_policy()
-            updated.id = policy.id
-            updated.created_at = policy.created_at
-            self.store.update_policy(updated)
+            policy_data = dialog.get_policy_data()
+            # Update policy fields from dialog data
+            policy.name = policy_data["name"]
+            policy.daily_limit_micro = policy_data["daily_limit_micro"]
+            policy.per_request_max_micro = policy_data["per_request_max_micro"]
+            policy.auto_approve_below_micro = policy_data["auto_approve_below_micro"]
+            policy.allowed_domains = policy_data.get("allowed_domains", [])
+            policy.blocked_domains = policy_data.get("blocked_domains", [])
+            policy.networks = policy_data.get("networks", [])
+            # Call core with updated policy object (same as Console)
+            self.core.update_policy(policy)
             self.populate_table()
             self.policy_changed.emit()
-            self.activity.emit(f"Policy '{updated.name}' updated", False)
+            self.activity.emit(f"Policy '{policy.name}' updated", False)
 
     def delete_policy(self, policy: SpendPolicy):
         """Delete a policy after confirmation."""
         # Check if any agents use this policy
-        agents_using = [a.name for a in self.store.get_all_agents() if a.policy_id == policy.id]
+        agents_using = [a.name for a in self.core.get_all_agents() if a.policy_id == policy.id]
 
         if agents_using:
             message = (
@@ -195,7 +206,7 @@ class PoliciesTab(QWidget):
             message = f"Delete policy '{policy.name}'?\n\nThis cannot be undone."
 
         if ask_question(self, "Delete Policy", message):
-            decommissioned = self.store.delete_policy(policy.id)
+            decommissioned = self.core.delete_policy(policy.id)
             self.populate_table()
             self.policy_changed.emit()
             self.policy_deleted.emit(policy.id, decommissioned)
@@ -203,7 +214,7 @@ class PoliciesTab(QWidget):
     def on_row_double_clicked(self, index):
         """Handle double-click on a table row to edit the policy."""
         row = index.row()
-        policies = self.store.get_all_policies()
+        policies = self.core.get_all_policies()
         if 0 <= row < len(policies):
             self.edit_policy(policies[row])
 
@@ -220,9 +231,13 @@ class AgentsTab(QWidget):
     agent_changed = pyqtSignal()
     activity = pyqtSignal(str, bool)  # message, is_error
 
-    def __init__(self, policy_store: PolicyStore):
+    def __init__(self, core):
+        """
+        Args:
+            core: MultiClaw core instance
+        """
         super().__init__()
-        self.store = policy_store
+        self.core = core
         self.wallets: list[WalletInfo] = []
         self.get_wallet_fn = None  # Set by MainWindow for wallet access
 
@@ -268,15 +283,15 @@ class AgentsTab(QWidget):
 
     def populate_table(self):
         """Refresh the table with current agents."""
-        agents = self.store.get_all_agents()
+        agents = self.core.get_all_agents()
         self.table.setRowCount(len(agents))
 
         for row, agent in enumerate(agents):
             self.table.setItem(row, 0, QTableWidgetItem(agent.name))
 
-            code_item = QTableWidgetItem(agent.code)
-            code_item.setFont(QFont(Theme.MONO_FONT, 9))
-            self.table.setItem(row, 1, code_item)
+            id_item = QTableWidgetItem(agent.id)
+            id_item.setFont(QFont(Theme.MONO_FONT, 9))
+            self.table.setItem(row, 1, id_item)
 
             pubkey_short = agent.auth_key[:8] + "..." + agent.auth_key[-6:]
             pubkey_item = QTableWidgetItem(pubkey_short)
@@ -284,7 +299,7 @@ class AgentsTab(QWidget):
             self.table.setItem(row, 2, pubkey_item)
 
             if agent.policy_id:
-                policy = self.store.get_policy(agent.policy_id)
+                policy = self.core.get_policy(agent.policy_id)
                 policy_name = policy.name if policy else "Unknown"
             else:
                 policy_name = "—"
@@ -352,18 +367,8 @@ class AgentsTab(QWidget):
 
     def register_agent(self):
         """Show dialog to register a new agent."""
-        # Need wallet password to encrypt agent secret
-        # Try to get it from any unlocked wallet
-        wallet_password = None
-        if self.get_wallet_fn and self.wallets:
-            for wallet_info in self.wallets:
-                # Try to get an unlocked wallet
-                wallet = self.get_wallet_fn(wallet_info.address if hasattr(wallet_info, 'address') else None)
-                if wallet and hasattr(wallet, '_password') and wallet._password:
-                    wallet_password = wallet._password
-                    break
-
-        if not wallet_password:
+        # Check if wallet is unlocked (core needs it for agent secret encryption)
+        if not self.core.is_wallet_unlocked():
             QMessageBox.warning(
                 self,
                 "Wallet Required",
@@ -372,22 +377,25 @@ class AgentsTab(QWidget):
             )
             return
 
-        dialog = AgentRegistrationDialog(wallet_password, self)
+        dialog = AgentRegistrationDialog(self.core, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             agent = dialog.get_agent()
-            self.store.add_agent(agent)
+            # Agent already created via core.create_agent() in dialog
             self.populate_table()
             self.agent_changed.emit()
-            self.activity.emit(f"Agent '{agent.name}' registered (code: {agent.code})", False)
+            self.activity.emit(f"Agent '{agent.name}' registered (ID: {agent.id})", False)
 
     def commission_agent(self, agent: Agent):
         """Show dialog to commission an agent with a policy."""
-        dialog = CommissionDialog(agent, self.store, self.wallets, self.get_wallet_fn, self)
+        dialog = CommissionDialog(agent, self.core, self.wallets, self.get_wallet_fn, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.store.update_agent(agent)
+            # Core already updated the agent - just refresh display
             self.populate_table()
             self.agent_changed.emit()
-            policy = self.store.get_policy(agent.policy_id) if agent.policy_id else None
+
+            # Get fresh agent data from core for accurate logging
+            updated_agent = self.core.get_agent_by_code(agent.code)
+            policy = self.core.get_policy(updated_agent.policy_id) if updated_agent and updated_agent.policy_id else None
             policy_name = policy.name if policy else "Unknown"
             self.activity.emit(f"Agent '{agent.name}' commissioned with policy '{policy_name}'", False)
 
@@ -407,16 +415,14 @@ class AgentsTab(QWidget):
             "Suspend Agent",
             f"Suspend agent '{agent.name}'?\n\nThis will reject all signing requests from this agent."
         ):
-            agent.suspend()
-            self.store.update_agent(agent)
+            self.core.suspend_agent(agent.code)
             self.populate_table()
             self.agent_changed.emit()
             self.activity.emit(f"Agent '{agent.name}' suspended", False)
 
     def activate_agent(self, agent: Agent):
         """Reactivate a suspended agent."""
-        agent.activate()
-        self.store.update_agent(agent)
+        self.core.activate_agent(agent.code)
         self.populate_table()
         self.agent_changed.emit()
         self.activity.emit(f"Agent '{agent.name}' activated", False)
@@ -428,7 +434,7 @@ class AgentsTab(QWidget):
             "Delete Agent",
             f"Delete agent '{agent.name}'?\n\nThis cannot be undone."
         ):
-            self.store.delete_agent(agent.id)
+            self.core.delete_agent(agent.code)
             self.populate_table()
             self.agent_changed.emit()
             self.activity.emit(f"Agent '{agent.name}' deleted", False)
@@ -436,7 +442,7 @@ class AgentsTab(QWidget):
     def on_row_double_clicked(self, index):
         """Handle double-click on a table row to edit the agent."""
         row = index.row()
-        agents = self.store.get_all_agents()
+        agents = self.core.get_all_agents()
         if 0 <= row < len(agents):
             self.edit_agent(agents[row])
 
@@ -447,13 +453,13 @@ class AgentsTab(QWidget):
         old_status = agent.status
         old_mandate = agent.intent_mandate
 
-        dialog = EditAgentDialog(agent, self.store, self.wallets, self)
+        dialog = EditAgentDialog(agent, self.core, self.wallets, self)
         accepted = dialog.exec() == QDialog.DialogCode.Accepted
         mandate_revoked = dialog.was_mandate_revoked()
 
         # If mandate was revoked, always save even if dialog was cancelled
         if accepted or mandate_revoked:
-            self.store.update_agent(agent)
+            self.core.update_agent(agent)
             self.populate_table()
             self.agent_changed.emit()
 
@@ -461,7 +467,7 @@ class AgentsTab(QWidget):
             changes = []
             if agent.policy_id != old_policy_id:
                 if agent.policy_id:
-                    policy = self.store.get_policy(agent.policy_id)
+                    policy = self.core.get_policy(agent.policy_id)
                     changes.append(f"policy → {policy.name if policy else 'Unknown'}")
                 else:
                     changes.append("policy removed")
@@ -496,9 +502,13 @@ class HistoryTab(QWidget):
         "failed": Theme.ERROR,    # Red
     }
 
-    def __init__(self, store: PolicyStore):
+    def __init__(self, core):
+        """
+        Args:
+            core: MultiClaw core instance
+        """
         super().__init__()
-        self.store = store
+        self.core = core
         self._transactions: list[Transaction] = []
 
         layout = QVBoxLayout(self)
@@ -566,8 +576,8 @@ class HistoryTab(QWidget):
         self.refresh()
 
     def refresh(self):
-        """Reload transactions from store."""
-        self._transactions = self.store.get_all_transactions()
+        """Reload transactions from core."""
+        self._transactions = self.core.get_recent_transactions(limit=1000)
         self.update_agent_filter()
         self.apply_filters()
 
@@ -585,7 +595,7 @@ class HistoryTab(QWidget):
             QMessageBox.StandardButton.No
         )
         if reply == QMessageBox.StandardButton.Yes:
-            self.store.clear_transactions()
+            self.core.clear_transactions()
             self.refresh()
 
     def update_agent_filter(self):
@@ -641,8 +651,8 @@ class HistoryTab(QWidget):
             time_item.setData(Qt.ItemDataRole.UserRole, tx.id)
             self.table.setItem(row, 0, time_item)
 
-            # Agent name with code
-            agent_text = f"{tx.agent_name} ({tx.agent_code})"
+            # Agent name with ID
+            agent_text = f"{tx.agent_name} ({tx.agent_id})"
             self.table.setItem(row, 1, QTableWidgetItem(agent_text))
 
             self.table.setItem(row, 2, QTableWidgetItem(tx.format_amount()))
@@ -690,14 +700,14 @@ class HistoryTab(QWidget):
         if time_item:
             tx_id = time_item.data(Qt.ItemDataRole.UserRole)
             if tx_id:
-                tx = self.store.get_transaction(tx_id)
+                tx = self.core.get_transaction(tx_id)
                 if tx:
                     self.show_transaction_detail(tx)
 
     def show_transaction_detail(self, tx: Transaction):
         """Show a dialog with full transaction details."""
         from .dialogs import TransactionDetailDialog
-        dialog = TransactionDetailDialog(tx, self)
+        dialog = TransactionDetailDialog(tx, self.core, self)
         dialog.exec()
 
     def export_csv(self):
@@ -712,14 +722,14 @@ class HistoryTab(QWidget):
             with open(filename, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 writer.writerow([
-                    "Timestamp", "Agent", "Code", "Amount", "Recipient", "Resource",
+                    "Timestamp", "Agent", "ID", "Amount", "Recipient", "Resource",
                     "Network", "Status", "Auto", "Wallet ID", "TX Hash"
                 ])
                 for tx in self._transactions:
                     writer.writerow([
                         tx.timestamp,
                         tx.agent_name,
-                        tx.agent_code,
+                        tx.agent_id,
                         tx.format_amount(),
                         tx.recipient,
                         tx.resource or "",
@@ -748,11 +758,13 @@ class WalletTab(QWidget):
     wallet_path_changed = pyqtSignal(str)  # Emitted when wallet path changes (for settings persistence)
     activity = pyqtSignal(str, bool)    # Activity log (message, is_error)
 
-    def __init__(self):
+    def __init__(self, core):
         super().__init__()
 
+        self.core = core  # MultiClaw core instance (required)
         self._wallet: Optional[MultiClawWallet] = None
-        self._wallet_path = get_wallet_dir() / MULTICLAW_WALLET_FILE
+        wallet_dir = core.get_wallet_dir()
+        self._wallet_path = wallet_dir / MULTICLAW_WALLET_FILE
         self._custom_rpcs: dict[int, str] = {}
         self._balance_threads: list = []
         self._selected_network_chain_id: int = 1  # Ethereum Mainnet - first in list
@@ -988,15 +1000,19 @@ class WalletTab(QWidget):
 
     def _auto_unlock(self):
         """Auto-unlock an unencrypted wallet."""
-        try:
-            self._wallet = MultiClawWallet.load(self._wallet_path, NO_PASSWORD_SENTINEL)
+        if not self.core:
+            return
+
+        result = self.core.load_wallet(str(self._wallet_path), NO_PASSWORD_SENTINEL)
+        if result.get("success"):
+            self._wallet = self.core.get_wallet()
             self._is_unlocked = True
             self.populate_table()
             self.wallet_unlocked.emit()
-            self.wallets_changed.emit(self._wallet.addresses)
-        except Exception as e:
+            self.wallets_changed.emit(self._wallet.addresses if self._wallet else [])
+        else:
             import logging
-            logging.getLogger(__name__).warning(f"Failed to auto-unlock wallet: {e}")
+            logging.getLogger(__name__).warning(f"Failed to auto-unlock wallet: {result.get('error')}")
 
     @property
     def is_unlocked(self) -> bool:
@@ -1037,22 +1053,30 @@ class WalletTab(QWidget):
         """Emit wallet path changed signal for settings persistence."""
         self.wallet_path_changed.emit(str(self._wallet_path))
 
-    def try_unlock(self):
-        """Try to unlock the wallet with the entered password."""
-        password = self.password_input.text()
-        if not password:
-            self.lock_error_label.setText("Please enter your password")
+    def sync_from_core(self):
+        """Sync wallet state from core (called when core wallet state changes externally)."""
+        if not self.core:
             return
 
-        try:
-            self._wallet = MultiClawWallet.load(self._wallet_path, password)
+        core_unlocked = self.core.is_wallet_unlocked()
+        core_path = self.core.get_wallet_path()
+
+        if core_unlocked and not self._is_unlocked:
+            # Core has an unlocked wallet but we don't - sync our state
+            self._wallet = self.core.get_wallet()
             self._is_unlocked = True
+            if core_path:
+                from pathlib import Path
+                new_path = Path(core_path)
+                if self._wallet_path != new_path:
+                    self._wallet_path = new_path
+                    self._emit_path_changed()
 
             self.password_input.clear()
             self.lock_error_label.setText("")
             self._update_display()
             self.wallet_unlocked.emit()
-            self.wallets_changed.emit(self._wallet.addresses)
+            self.wallets_changed.emit(self._wallet.addresses if self._wallet else [])
             self.activity.emit("Wallet unlocked", False)
 
             # Start auto-lock timer if configured
@@ -1061,26 +1085,62 @@ class WalletTab(QWidget):
 
             # Refresh balances
             QTimer.singleShot(500, self.refresh_all_balances)
+        elif not core_unlocked and self._is_unlocked:
+            # Core wallet is locked but we think it's unlocked - sync our state
+            self._auto_lock_timer.stop()
+            self._wallet = None
+            self._is_unlocked = False
+            self._update_display()
+            self.wallet_locked.emit()
 
-        except ValueError:
-            self.lock_error_label.setText("Wrong password")
+    def try_unlock(self):
+        """Try to unlock the wallet with the entered password."""
+        if not self.core:
+            self.lock_error_label.setText("Error: Core not available")
+            return
+
+        # Empty password is allowed (wallets can have no password)
+        password = self.password_input.text()
+
+        result = self.core.load_wallet(str(self._wallet_path), password)
+
+        if result.get("success"):
+            self._wallet = self.core.get_wallet()  # Get reference for display
+            self._is_unlocked = True
+
+            self.password_input.clear()
+            self.lock_error_label.setText("")
+            self._update_display()
+            self.wallet_unlocked.emit()
+            self.wallets_changed.emit(self._wallet.addresses if self._wallet else [])
+            self.activity.emit("Wallet unlocked", False)
+
+            # Start auto-lock timer if configured
+            if self._auto_lock_minutes > 0:
+                self._reset_auto_lock_timer()
+
+            # Refresh balances
+            QTimer.singleShot(500, self.refresh_all_balances)
+        else:
+            error = result.get("error", "Unknown error")
+            if "password" in error.lower():
+                self.lock_error_label.setText("Wrong password")
+            elif "not found" in error.lower():
+                self.lock_error_label.setText("Wallet file not found")
+                self._update_display()
+            else:
+                self.lock_error_label.setText(f"Error: {error[:50]}")
             self.password_input.clear()
             self.password_input.setFocus()
-        except FileNotFoundError:
-            self.lock_error_label.setText("Wallet file not found")
-            self._update_display()
-        except Exception as e:
-            self.lock_error_label.setText(f"Error: {str(e)[:50]}")
-            self.password_input.clear()
 
     def lock(self):
         """Lock the wallet, clearing sensitive data from memory."""
         self._auto_lock_timer.stop()
 
-        if self._wallet:
-            self._wallet.lock()
-            self._wallet = None
+        if self.core:
+            self.core.lock_wallet()
 
+        self._wallet = None
         self._is_unlocked = False
         self._update_display()
         self.wallet_locked.emit()
@@ -1208,10 +1268,12 @@ class WalletTab(QWidget):
 
         # Open withdraw dialog
         from .dialogs import WithdrawUSDCDialog
+        # Use core's method to get private keys
+        get_key_fn = self.core.get_private_key_for_address if self.core else None
         dialog = WithdrawUSDCDialog(
             wallet_entry=entry,
             balance=balance,
-            get_private_key_fn=self._wallet.get_private_key,
+            get_private_key_fn=get_key_fn,
             chain_id=self._selected_network_chain_id,
             parent=self
         )
@@ -1237,8 +1299,12 @@ class WalletTab(QWidget):
 
     def _load_wallet(self):
         """Browse for and load an existing wallet file."""
+        if not self.core:
+            self.activity.emit("Error: Core not available", True)
+            return
+
         # Start in the data directory
-        start_dir = str(get_wallet_dir())
+        start_dir = str(self.core.get_wallet_dir())
 
         file_path, _ = QFileDialog.getOpenFileName(
             self,
@@ -1259,38 +1325,45 @@ class WalletTab(QWidget):
 
         # Check if encrypted
         if MultiClawWallet.is_file_encrypted(wallet_path):
-            # Show unlock dialog
+            # Show unlock dialog - this prompts for password
             dialog = MultiClawWalletUnlockDialog(wallet_path, self)
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 return
-            self._wallet = dialog.wallet
+            # Dialog already loaded the wallet, now load through core
+            password = dialog.password if hasattr(dialog, 'password') else ""
+            result = self.core.load_wallet(str(wallet_path), password)
         else:
-            # Load unencrypted
-            try:
-                self._wallet = MultiClawWallet.load(wallet_path, NO_PASSWORD_SENTINEL)
-            except Exception as e:
-                QMessageBox.warning(self, "Load Failed", f"Could not load wallet:\n{e}")
-                return
+            # Load unencrypted through core
+            result = self.core.load_wallet(str(wallet_path), NO_PASSWORD_SENTINEL)
 
-        # Update path to loaded wallet
+        if not result.get("success"):
+            QMessageBox.warning(self, "Load Failed", f"Could not load wallet:\n{result.get('error')}")
+            return
+
+        # Update local state from core
+        self._wallet = self.core.get_wallet()
         self._wallet_path = wallet_path
         self._is_unlocked = True
         self._update_display()
         self._emit_path_changed()
         self.wallet_unlocked.emit()
-        self.wallets_changed.emit(self._wallet.addresses)
+        self.wallets_changed.emit(self._wallet.addresses if self._wallet else [])
         self.activity.emit(f"Loaded wallet: {wallet_path.name}", False)
         QTimer.singleShot(500, self.refresh_all_balances)
 
     def _create_wallet(self):
         """Show dialog to create a new wallet with custom filename."""
+        if not self.core:
+            self.activity.emit("Error: Core not available", True)
+            return
+
         # First, get the filename
         filename_dialog = WalletFilenameDialog(self)
         if filename_dialog.exec() != QDialog.DialogCode.Accepted:
             return
 
         wallet_filename = filename_dialog.filename
-        new_wallet_path = get_wallet_dir() / wallet_filename
+        new_wallet_path = self.core.get_wallet_dir() / wallet_filename
 
         # Check if file already exists
         if new_wallet_path.exists():
@@ -1311,45 +1384,50 @@ class WalletTab(QWidget):
 
         password = dialog.password
 
-        # Create the wallet
-        self._wallet = MultiClawWallet.create(password)
+        # Use core.create_wallet() - this creates, saves, and unlocks the wallet
+        if dialog.method == 'import_pkey':
+            # Private key import
+            result = self.core.create_wallet(
+                wallet_path=str(new_wallet_path),
+                password=password,
+                private_key=dialog.private_key,
+                unlock=True
+            )
+        else:
+            # Seed-based (new or imported)
+            result = self.core.create_wallet(
+                wallet_path=str(new_wallet_path),
+                password=password,
+                seed_phrase=dialog.seed_phrase,
+                derivation_path=dialog.derivation_path,
+                address_indices=dialog.selected_indices,
+                address_names=dialog.selected_names,
+                unlock=True
+            )
 
-        # Handle the choice using wizard values directly
-        if dialog.method == 'new_seed' or dialog.method == 'import_seed':
-            # Add the seed and derive selected addresses
-            seed_id = self._wallet.add_seed(dialog.seed_phrase, dialog.derivation_path)
-            for index in dialog.selected_indices:
-                # Get custom name if provided, update with actual seed_id
-                name = dialog.selected_names.get(index)
-                if name:
-                    # Replace placeholder S001 with actual seed_id
-                    name = name.replace("S001", seed_id)
-                self._wallet.add_address_from_seed(seed_id, index, name)
-            action = "Created" if dialog.method == 'new_seed' else "Imported"
-            self.activity.emit(f"{action} seed {seed_id} with {len(dialog.selected_indices)} address(es)", False)
-        elif dialog.method == 'import_pkey':
-            addr_id = self._wallet.add_imported_key(dialog.private_key)
-            addr = None
-            for a in self._wallet.addresses:
-                if a.id == addr_id:
-                    addr = a
-                    break
-            if addr:
-                self.activity.emit(f"Imported private key: {format_address(addr.address)}", False)
-
-        if self._wallet and len(self._wallet.addresses) > 0:
-            # Update path to new filename and save
+        if result.get("success"):
+            # Get the wallet reference from core (core already created and unlocked it)
+            self._wallet = self.core.get_wallet()
             self._wallet_path = new_wallet_path
-            self._save_wallet()
             self._is_unlocked = True
             self._update_display()
             self._emit_path_changed()
             self.wallet_unlocked.emit()
-            self.wallets_changed.emit(self._wallet.addresses)
+            self.wallets_changed.emit(self._wallet.addresses if self._wallet else [])
+
+            # Log activity
+            addresses = result.get("addresses", [])
+            if dialog.method == 'import_pkey':
+                if addresses:
+                    self.activity.emit(f"Imported private key: {format_address(addresses[0]['address'])}", False)
+            else:
+                action = "Created" if dialog.method == 'new_seed' else "Imported"
+                self.activity.emit(f"{action} wallet with {len(addresses)} address(es)", False)
+
             self.activity.emit(f"Wallet created: {wallet_filename}", False)
             QTimer.singleShot(500, self.refresh_all_balances)
         else:
-            # User cancelled during seed/key entry
+            self.activity.emit(f"Error: {result.get('error', 'Unknown error')}", True)
             self._wallet = None
 
     def _add_address(self):
@@ -1402,34 +1480,33 @@ class WalletTab(QWidget):
         removed = 0
         removed_addresses = []  # Track 0x addresses for agent cleanup
         for address_id in browser.removed_addresses:
-            # Get the address before removing
-            for addr in self._wallet.addresses:
-                if addr.id == address_id:
-                    removed_addresses.append(addr.address)
-                    break
-            self._wallet.remove_address(address_id)
-            removed += 1
+            result = self.core.remove_address(address_id) if self.core else {"success": False}
+            if result.get("success"):
+                removed_addresses.append(result.get("removed_address"))
+                removed += 1
 
         # Add selected addresses
         added = 0
         for index, name in browser.selected_addresses.items():
-            self._wallet.add_address_from_seed(seed_id, index, name)
-            added += 1
+            result = self.core.add_address_from_seed(seed_id, index, name) if self.core else {"success": False}
+            if result.get("success"):
+                added += 1
 
         # Rename any existing addresses that were edited
         renamed = 0
         for address_id, new_name in browser.edited_existing.items():
-            self._wallet.rename_address(address_id, new_name)
-            renamed += 1
+            if self.core and self.core.rename_address(address_id, new_name):
+                renamed += 1
 
         if added > 0 or renamed > 0 or removed > 0:
-            self._save_wallet()
+            self._wallet = self.core.get_wallet() if self.core else None  # Refresh local reference
             self.populate_table()
-            self.wallets_changed.emit(self._wallet.addresses)
+            self.wallets_changed.emit(self._wallet.addresses if self._wallet else [])
 
             # Emit wallet_deleted for each removed address (for agent cleanup)
             for addr in removed_addresses:
-                self.wallet_deleted.emit(addr)
+                if addr:
+                    self.wallet_deleted.emit(addr)
 
             if added > 0:
                 self.activity.emit(f"Added {added} address{'es' if added > 1 else ''} from {seed_id}", False)
@@ -1441,7 +1518,7 @@ class WalletTab(QWidget):
 
     def _confirm_and_delete_seed(self, seed_id: str):
         """Delete a seed with agent decommission warning."""
-        if not self._wallet:
+        if not self.core or not self._wallet:
             return
 
         # Get all addresses from this seed
@@ -1449,11 +1526,12 @@ class WalletTab(QWidget):
 
         if not seed_addresses:
             # No addresses, just delete the seed
-            self._wallet.remove_seed(seed_id, remove_addresses=True)
-            self._save_wallet()
-            self._update_display()
-            self.wallets_changed.emit(self._wallet.addresses if self._wallet else [])
-            self.activity.emit(f"Deleted seed {seed_id} (no addresses)", False)
+            result = self.core.remove_seed(seed_id, remove_addresses=True)
+            if result.get("success"):
+                self._wallet = self.core.get_wallet()
+                self._update_display()
+                self.wallets_changed.emit(self._wallet.addresses if self._wallet else [])
+                self.activity.emit(f"Deleted seed {seed_id} (no addresses)", False)
             return
 
         # Collect all linked agents across all addresses in the seed
@@ -1494,48 +1572,49 @@ class WalletTab(QWidget):
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            # Delete the seed and all its addresses
-            self._wallet.remove_seed(seed_id, remove_addresses=True)
-            self._save_wallet()
+            # Delete the seed and all its addresses through core
+            result = self.core.remove_seed(seed_id, remove_addresses=True)
 
-            # Emit wallet_deleted for each address (for agent cleanup)
-            for addr_0x in address_0x_list:
-                self.wallet_deleted.emit(addr_0x)
+            if result.get("success"):
+                # Emit wallet_deleted for each address (for agent cleanup)
+                for addr_0x in result.get("removed_addresses", []):
+                    self.wallet_deleted.emit(addr_0x)
 
-            # Check if wallet is now empty
-            if len(self._wallet.addresses) == 0 and len(self._wallet.seeds) == 0:
-                if self._wallet_path.exists():
-                    self._wallet_path.unlink()
-                self._wallet = None
-                self._is_unlocked = False
+                # Refresh local reference
+                self._wallet = self.core.get_wallet()
 
-            self._update_display()
-            if self._wallet:
-                self.wallets_changed.emit(self._wallet.addresses)
-            else:
-                self.wallets_changed.emit([])
+                # Check if wallet is now empty
+                if self.core.is_wallet_empty():
+                    self.core.delete_wallet_file()
+                    self._wallet = None
+                    self._is_unlocked = False
 
-            self.activity.emit(f"Deleted seed {seed_id} with {len(seed_addresses)} address(es)", False)
+                self._update_display()
+                self.wallets_changed.emit(self._wallet.addresses if self._wallet else [])
+                self.activity.emit(f"Deleted seed {seed_id} with {len(seed_addresses)} address(es)", False)
 
     def _handle_new_seed(self):
         """Handle creating a new seed phrase."""
-        if not self._wallet:
+        if not self.core or not self._wallet:
             return
 
         dialog = NewSeedDialog(self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 
-        seed_id = self._wallet.add_seed(dialog.seed_phrase)
-        self._save_wallet()
-        self.activity.emit(f"Created new seed {seed_id}", False)
-
-        # Open derivation browser for the new seed
-        self._handle_existing_seed(seed_id)
+        result = self.core.add_seed(dialog.seed_phrase)
+        if result.get("success"):
+            seed_id = result.get("seed_id")
+            self._wallet = self.core.get_wallet()  # Refresh local reference
+            self.activity.emit(f"Created new seed {seed_id}", False)
+            # Open derivation browser for the new seed
+            self._handle_existing_seed(seed_id)
+        else:
+            self.activity.emit(f"Error: {result.get('error')}", True)
 
     def _handle_import_seed(self):
         """Handle importing a seed phrase."""
-        if not self._wallet:
+        if not self.core or not self._wallet:
             return
 
         dialog = ImportSeedToWalletDialog(self)
@@ -1544,7 +1623,14 @@ class WalletTab(QWidget):
 
         # Check if seed already exists
         existing_seed_ids = {s.id for s in self._wallet.seeds}
-        seed_id = self._wallet.add_seed(dialog.seed_phrase)
+
+        result = self.core.add_seed(dialog.seed_phrase)
+        if not result.get("success"):
+            self.activity.emit(f"Error: {result.get('error')}", True)
+            return
+
+        seed_id = result.get("seed_id")
+        self._wallet = self.core.get_wallet()  # Refresh local reference
 
         if seed_id in existing_seed_ids:
             # Seed already exists - show message and open derivation browser
@@ -1555,7 +1641,6 @@ class WalletTab(QWidget):
                 "Opening the derivation browser to manage addresses."
             )
         else:
-            self._save_wallet()
             self.activity.emit(f"Imported seed as {seed_id}", False)
 
         # Open derivation browser for the seed (new or existing)
@@ -1563,26 +1648,25 @@ class WalletTab(QWidget):
 
     def _handle_import_pkey(self):
         """Handle importing a private key."""
-        if not self._wallet:
+        if not self.core or not self._wallet:
             return
 
         dialog = ImportPrivateKeyToWalletDialog(self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 
-        addr_id = self._wallet.add_imported_key(dialog.private_key, dialog.name)
+        result = self.core.add_imported_key(dialog.private_key, dialog.name)
+        if not result.get("success"):
+            self.activity.emit(f"Error: {result.get('error')}", True)
+            return
 
-        self._save_wallet()
+        self._wallet = self.core.get_wallet()  # Refresh local reference
         self.populate_table()
-        self.wallets_changed.emit(self._wallet.addresses)
+        self.wallets_changed.emit(self._wallet.addresses if self._wallet else [])
 
-        addr = None
-        for a in self._wallet.addresses:
-            if a.id == addr_id:
-                addr = a
-                break
-        if addr:
-            self.activity.emit(f"Imported private key: {format_address(addr.address)}", False)
+        address = result.get("address")
+        if address:
+            self.activity.emit(f"Imported private key: {format_address(address)}", False)
         QTimer.singleShot(500, self.refresh_all_balances)
 
     def _on_sweep_clicked(self):
@@ -1601,10 +1685,12 @@ class WalletTab(QWidget):
 
         from ui.dialogs import SweepUSDCDialog
 
+        # Use core's method to get private keys
+        get_key_fn = self.core.get_private_key_for_address if self.core else None
         dialog = SweepUSDCDialog(
             parent=self,
             addresses=addresses,
-            get_private_key_fn=self._wallet.get_private_key,
+            get_private_key_fn=get_key_fn,
             chain_id=self._selected_network_chain_id
         )
         dialog.exec()
@@ -1614,7 +1700,7 @@ class WalletTab(QWidget):
 
     def _on_detach_wallet(self):
         """Detach (unload) the current wallet without deleting the file."""
-        if not self._wallet:
+        if not self.core or not self._wallet:
             return
 
         # Collect all linked agents across all addresses
@@ -1656,11 +1742,11 @@ class WalletTab(QWidget):
             for addr in self._wallet.addresses:
                 self.wallet_deleted.emit(addr.address)
 
-            # Clear wallet state without deleting file
-            self._wallet.lock()
+            # Detach through core
+            self.core.detach_wallet()
             self._wallet = None
             self._is_unlocked = False
-            self._wallet_path = get_wallet_dir() / MULTICLAW_WALLET_FILE  # Reset to default
+            self._wallet_path = self.core.get_wallet_dir() / MULTICLAW_WALLET_FILE  # Reset to default
 
             self._update_display()
             self._emit_path_changed()
@@ -1670,7 +1756,7 @@ class WalletTab(QWidget):
 
     def _on_delete_wallet(self):
         """Delete the wallet file permanently."""
-        if not self._wallet:
+        if not self.core or not self._wallet:
             return
 
         # Collect all linked agents across all addresses
@@ -1752,23 +1838,15 @@ class WalletTab(QWidget):
         for addr in self._wallet.addresses:
             self.wallet_deleted.emit(addr.address)
 
-        # Delete the file
-        wallet_path = self._wallet_path
-        self._wallet.lock()
+        # Delete through core
+        self.core.delete_wallet_file()
         self._wallet = None
         self._is_unlocked = False
 
-        # Clear the table immediately before any file operations
+        # Clear the table immediately
         self.table.setRowCount(0)
 
-        try:
-            if wallet_path.exists():
-                wallet_path.unlink()
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Failed to delete wallet file: {e}")
-
-        self._wallet_path = get_wallet_dir() / MULTICLAW_WALLET_FILE  # Reset to default
+        self._wallet_path = self.core.get_wallet_dir() / MULTICLAW_WALLET_FILE  # Reset to default
 
         self._update_display()
         self._emit_path_changed()
@@ -1778,13 +1856,12 @@ class WalletTab(QWidget):
 
     def _save_wallet(self):
         """Save the wallet to disk."""
-        if self._wallet:
-            self._wallet_path.parent.mkdir(parents=True, exist_ok=True)
-            self._wallet.save(self._wallet_path)
+        if self.core:
+            self.core.save_wallet()
 
     def delete_address(self, address_id: str):
         """Delete an address after confirmation."""
-        if not self._wallet:
+        if not self.core or not self._wallet:
             return
 
         # Find the address
@@ -1832,26 +1909,23 @@ class WalletTab(QWidget):
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            old_address = addr.address
-            self._wallet.remove_address(address_id)
-            self._save_wallet()
+            result = self.core.remove_address(address_id)
 
-            self.wallet_deleted.emit(old_address)
+            if result.get("success"):
+                removed_address = result.get("removed_address")
+                self.wallet_deleted.emit(removed_address)
 
-            # Check if wallet is now empty
-            if len(self._wallet.addresses) == 0 and len(self._wallet.seeds) == 0:
-                # Delete the wallet file entirely
-                if self._wallet_path.exists():
-                    self._wallet_path.unlink()
-                self._wallet = None
-                self._is_unlocked = False
+                # Check if wallet is now empty
+                if self.core.is_wallet_empty():
+                    self.core.delete_wallet_file()
+                    self._wallet = None
+                    self._is_unlocked = False
+                else:
+                    self._wallet = self.core.get_wallet()
 
-            self._update_display()
-            if self._wallet:
-                self.wallets_changed.emit(self._wallet.addresses)
-            else:
-                self.wallets_changed.emit([])
-            self.activity.emit(f"Removed address: {format_address(old_address)}", False)
+                self._update_display()
+                self.wallets_changed.emit(self._wallet.addresses if self._wallet else [])
+                self.activity.emit(f"Removed address: {format_address(removed_address)}", False)
 
     def refresh_all_balances(self):
         """Refresh balances for all addresses."""
@@ -1936,8 +2010,14 @@ class NetworkTab(QWidget):
     verify_settlements_changed = pyqtSignal(bool)  # Emitted when verify settlements setting changes
     rpc_changed = pyqtSignal(int, str)  # chain_id, new_rpc_url (empty string means use default)
     allow_lan_changed = pyqtSignal(bool)  # Emitted when LAN access setting changes
-    def __init__(self):
+
+    def __init__(self, core):
+        """
+        Args:
+            core: MultiClaw core instance
+        """
         super().__init__()
+        self.core = core
         # Networks ordered by market cap: Ethereum > Base > SKALE
         self.network_enabled: dict[int, bool] = {
             1: False,            # Ethereum Mainnet
@@ -2117,17 +2197,20 @@ class NetworkTab(QWidget):
 
         layout.addStretch()
 
-        agent_server.started.connect(self.on_server_started)
-        agent_server.stopped.connect(self.on_server_stopped)
-        agent_server.error.connect(self.on_server_error)
+        # Set up callbacks with Qt thread marshaling
+        from PyQt6.QtCore import QTimer
+        self.core.set_server_callbacks(
+            on_started=lambda port: QTimer.singleShot(0, lambda: self.on_server_started(port)),
+            on_stopped=lambda: QTimer.singleShot(0, self.on_server_stopped),
+            on_error=lambda msg: QTimer.singleShot(0, lambda: self.on_server_error(msg))
+        )
 
     def toggle_server(self):
         """Start or stop the agent server."""
-        if agent_server.is_running:
-            agent_server.stop()
+        if self.core.is_server_running():
+            self.core.stop_server()
         else:
-            port = self._port
-            agent_server.start(port, allow_lan=self._allow_lan)
+            self.core.start_server(self._port, allow_lan=self._allow_lan)
 
     def _on_port_changed(self, value: int):
         """Handle port input value change."""
@@ -2158,7 +2241,7 @@ class NetworkTab(QWidget):
 
         if enabled:
             # Enable editing (only if server not running)
-            if not agent_server.is_running:
+            if not self.core.is_server_running():
                 self.port_input.setEnabled(True)
         else:
             # Disable editing and reset to default
@@ -2173,7 +2256,7 @@ class NetworkTab(QWidget):
         self._custom_port_enabled = enabled
 
         if enabled:
-            if not agent_server.is_running:
+            if not self.core.is_server_running():
                 self.port_input.setEnabled(True)
             self.activity.emit("Custom port enabled - update agent configurations if changing port", False, True)
         else:
@@ -2227,6 +2310,13 @@ class NetworkTab(QWidget):
     def is_network_enabled(self, chain_id: int) -> bool:
         """Check if signing is enabled for a network."""
         return self.network_enabled.get(chain_id, False)
+
+    def set_network_enabled(self, chain_id: int, enabled: bool):
+        """Set network enabled state and update UI (used on load from settings)."""
+        self.network_enabled[chain_id] = enabled
+        # Update checkbox if it exists
+        if hasattr(self, 'network_checkboxes') and chain_id in self.network_checkboxes:
+            self.network_checkboxes[chain_id].setChecked(enabled)
 
     def _on_rate_limit_changed(self, value: int):
         """Handle rate limit change."""

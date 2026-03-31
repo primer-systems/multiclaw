@@ -60,13 +60,13 @@ def to_caip_network(network: str) -> str:
         return network
     # Legacy name mapping for common networks
     legacy_map = {
+        "ethereum": "eip155:1",
+        "ethereum-sepolia": "eip155:11155111",
+        "sepolia": "eip155:11155111",  # alias
         "base": "eip155:8453",
         "base-sepolia": "eip155:84532",
-        "ethereum": "eip155:1",
-        "sepolia": "eip155:11155111",
-        "arbitrum": "eip155:42161",
-        "optimism": "eip155:10",
-        "polygon": "eip155:137",
+        "skale-base": "eip155:1187947933",
+        "skale-base-sepolia": "eip155:324705682",
     }
     if network.lower() in legacy_map:
         return legacy_map[network.lower()]

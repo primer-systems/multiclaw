@@ -28,7 +28,7 @@ mnemonic_datas = collect_data_files('mnemonic')
 eth_account_datas = collect_data_files('eth_account')
 
 a = Analysis(
-    [str(src_dir / 'app.py')],
+    [str(src_dir / 'multiclaw.py')],
     pathex=[str(src_dir)],
     binaries=[],
     datas=[
@@ -60,7 +60,16 @@ a = Analysis(
         'eth_account.messages',
         'eth_account.signers',
         'eth_account.signers.local',
-        'eth_account._utils.structured_data',
+        'eth_account._utils.encode_typed_data',
+        'eth_account._utils.encode_typed_data.encoding_and_hashing',
+        'eth_account._utils.encode_typed_data.helpers',
+        'eth_account._utils.validation',
+        'eth_account.types',
+        'eth_account.datastructures',
+        'eth_account.account_local_actions',
+        'eth_account.typed_transactions',
+        'eth_account.typed_transactions.access_list_transaction',
+        'eth_account.typed_transactions.dynamic_fee_transaction',
         'eth_account._utils.signing',
         # Ethereum - keys and utilities
         'eth_keys',
@@ -81,6 +90,12 @@ a = Analysis(
         'web3.auto',
         'web3.providers',
         'web3.exceptions',
+        # File watching
+        'watchdog',
+        'watchdog.observers',
+        'watchdog.observers.polling',
+        'watchdog.observers.read_directory_changes',  # Windows
+        'watchdog.events',
         # Standard library often missed
         'json',
         'hashlib',

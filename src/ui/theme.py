@@ -24,6 +24,10 @@ class Theme:
     ERROR = "#ef4444"
     WARNING = "#f59e0b"
 
+    # Help text colors
+    PLACEHOLDER = "#22d3ee"  # Cyan - for <user_input> placeholders
+    OPTIONAL = "#a78bfa"     # Purple - for [optional] parameters
+
     # Typography
     MONO_FONT = "JetBrains Mono"
 

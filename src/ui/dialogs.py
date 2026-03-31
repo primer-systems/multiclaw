@@ -23,6 +23,8 @@ from datetime import datetime
 from .theme import Theme
 
 # Clipboard auto-clear timeout (seconds)
+# Security: Sensitive data (secrets, private keys, seed phrases) should not
+# remain in clipboard indefinitely. Auto-clear reduces exposure window.
 CLIPBOARD_CLEAR_TIMEOUT = 60
 
 
@@ -30,7 +32,16 @@ def copy_sensitive_to_clipboard(text: str, parent: QWidget = None, timeout_sec: 
     """
     Copy sensitive data to clipboard with auto-clear.
 
-    Copies the text to clipboard and schedules automatic clearing after timeout.
+    Security: Sensitive data like agent secrets, private keys, or seed phrases
+    should not remain in the clipboard indefinitely. This function:
+    1. Copies the text to clipboard
+    2. Schedules automatic clearing after timeout (default 60 seconds)
+    3. Only clears if clipboard still contains our text (user may have copied something else)
+
+    Args:
+        text: Sensitive text to copy
+        parent: Parent widget for notification dialog (optional)
+        timeout_sec: Seconds before auto-clear (default: 60)
     """
     clipboard = QApplication.clipboard()
     clipboard.setText(text)
@@ -49,7 +60,7 @@ def copy_sensitive_to_clipboard(text: str, parent: QWidget = None, timeout_sec: 
             "Copied",
             f"Data copied to clipboard.\n\nClipboard will auto-clear in {timeout_sec} seconds."
         )
-from models import SpendPolicy, Agent, PolicyStore, generate_agent_token, generate_agent_code, generate_intent_mandate, encrypt_agent_secret, hash_bearer_token
+from models import SpendPolicy, Agent
 from wallet import WalletInfo, Wallet, PrivateKeyWallet, AddressEntry
 from networks import NETWORKS, format_address
 
@@ -68,13 +79,12 @@ class AgentRegistrationDialog(QDialog):
     PAGE_CONFIGURE = 0
     PAGE_CREDENTIALS = 1
 
-    def __init__(self, wallet_password: str, parent=None):
+    def __init__(self, core, parent=None):
         """
         Create agent registration dialog.
 
         Args:
-            wallet_password: Password to encrypt the agent's shared secret.
-                           This should be the unlocked wallet's password.
+            core: MultiClaw core instance (required)
             parent: Parent widget
         """
         super().__init__(parent)
@@ -82,7 +92,7 @@ class AgentRegistrationDialog(QDialog):
         self.setMinimumWidth(550)
         self.setMinimumHeight(400)
 
-        self._wallet_password = wallet_password
+        self._core = core
         self.agent = None
         self.agent_token = None
         self.config_text = ""
@@ -136,7 +146,6 @@ class AgentRegistrationDialog(QDialog):
         form = QFormLayout()
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("e.g., claude-dev, research-bot")
-        self.name_input.returnPressed.connect(self._on_action)
         form.addRow("Agent Name:", self.name_input)
         layout.addLayout(form)
 
@@ -253,6 +262,15 @@ class AgentRegistrationDialog(QDialog):
         layout.addStretch()
         self.stack.addWidget(page)
 
+    def keyPressEvent(self, event):
+        """Handle key presses - prevent Enter from closing dialog on page 1."""
+        from PyQt6.QtCore import Qt
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            # Handle Enter explicitly via action button logic
+            self._on_action()
+            return  # Don't propagate to QDialog default handling
+        super().keyPressEvent(event)
+
     def _on_action(self):
         """Handle action button click based on current page."""
         if self.stack.currentIndex() == self.PAGE_CONFIGURE:
@@ -261,70 +279,45 @@ class AgentRegistrationDialog(QDialog):
             self._register_agent()
 
     def _generate_token(self):
-        """Generate authentication credentials and move to credentials page."""
+        """Generate authentication credentials via core and move to credentials page."""
         name = self.name_input.text().strip()
         if not name:
             QMessageBox.warning(self, "Validation Error", "Agent name is required.")
             return
 
+        # Check for duplicate name using core
+        for agent in self._core.get_all_agents():
+            if agent.name == name:
+                QMessageBox.warning(self, "Duplicate Name", f"Agent name '{name}' already exists.")
+                return
+
         # Determine auth mode
         auth_mode = "hmac" if self.hmac_radio.isChecked() else "bearer"
 
-        # Generate the token (same format for both modes)
-        self.agent_token, shared_secret = generate_agent_token()
+        # Create agent via core - this handles all the crypto
+        try:
+            self.agent, self.agent_token = self._core.create_agent(name, auth_mode)
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to create agent: {e}")
+            return
 
-        if auth_mode == "hmac":
-            # HMAC mode: encrypt the shared secret with wallet password
-            # Pre-generate agent code for AAD (binds ciphertext to this specific agent)
-            agent_code = generate_agent_code()
-            encrypted, iv, tag, salt = encrypt_agent_secret(shared_secret, self._wallet_password, agent_code)
-            self.agent = Agent.create(
-                name=name,
-                encrypted_auth_key=encrypted,
-                auth_key_iv=iv,
-                auth_key_tag=tag,
-                auth_key_salt=salt,
-                auth_mode="hmac",
-                code=agent_code
-            )
-            self.config_text = f"""<agent-instructions>
-You have been granted access to MultiClaw, an x402 agent manifold by Primer.
-<multiclaw-config>
-MULTICLAW_AGENT_CODE={self.agent.code}
+        # Build config text
+        self.config_text = f"""I have set up a local service called MultiClaw that I want you to interact with. You can use this to handle x402 payments on my behalf.
+
+Usage instructions are at http://localhost:9402/agent
+Familiarise yourself with the instructions now, and use them any time you encounter a HTTP 402 (Payment Required) response.
+
+Your credentials:
+MULTICLAW_AGENT_ID={self.agent.id}
 MULTICLAW_AGENT_TOKEN={self.agent_token}
-MULTICLAW_AUTH_MODE=hmac
-MULTICLAW_URL=http://localhost:9402
-</multiclaw-config>
-
-Fetch usage instructions from http://localhost:9402/agent
-to understand what to do when you encounter HTTP 402 responses.
-</agent-instructions>"""
-        else:
-            # Bearer mode: store hash of the token (no encryption needed)
-            token_hash = hash_bearer_token(self.agent_token)
-            self.agent = Agent.create(
-                name=name,
-                encrypted_auth_key=token_hash,
-                auth_mode="bearer"
-            )
-            self.config_text = f"""<agent-instructions>
-You have been granted access to MultiClaw, an x402 agent manifold by Primer.
-<multiclaw-config>
-MULTICLAW_AGENT_CODE={self.agent.code}
-MULTICLAW_AGENT_TOKEN={self.agent_token}
-MULTICLAW_AUTH_MODE=bearer
-MULTICLAW_URL=http://localhost:9402
-</multiclaw-config>
-
-Fetch usage instructions from http://localhost:9402/agent
-to understand what to do when you encounter HTTP 402 responses.
-</agent-instructions>"""
+MULTICLAW_AUTH_MODE={auth_mode}
+MULTICLAW_URL=http://localhost:9402"""
 
         self.config_display.setPlainText(self.config_text)
 
         # Move to credentials page
         self.stack.setCurrentIndex(self.PAGE_CREDENTIALS)
-        self.action_btn.setText("Register Agent")
+        self.action_btn.setText("Done")
 
     def _copy_config(self):
         """Copy configuration to clipboard."""
@@ -333,9 +326,10 @@ to understand what to do when you encounter HTTP 402 responses.
             QMessageBox.information(self, "Copied", "Agent configuration copied to clipboard.")
 
     def _register_agent(self):
-        """Complete registration."""
-        if self.agent:
-            self.accept()
+        """Complete registration - agent already created via core."""
+        # Agent was created when Generate Token was clicked
+        # Just close the dialog
+        self.accept()
 
     def get_agent(self) -> Agent:
         """Return the created agent."""
@@ -352,14 +346,22 @@ class CommissionDialog(QDialog):
     def __init__(
         self,
         agent: Agent,
-        policy_store: PolicyStore,
+        core,
         wallets: list[WalletInfoLike] = None,
         get_wallet_fn=None,
         parent=None
     ):
+        """
+        Args:
+            agent: Agent to commission
+            core: MultiClaw core instance
+            wallets: List of available wallet addresses
+            get_wallet_fn: Function to get unlocked wallet by address
+            parent: Parent widget
+        """
         super().__init__(parent)
         self.agent = agent
-        self.policy_store = policy_store
+        self.core = core
         self.wallets = wallets or []
         self.get_wallet_fn = get_wallet_fn  # Function to get unlocked wallet by address
         self.selected_policy: Optional[SpendPolicy] = None
@@ -385,7 +387,7 @@ class CommissionDialog(QDialog):
         layout.addWidget(policy_label)
 
         self.policy_combo = QComboBox()
-        policies = self.policy_store.get_all_policies()
+        policies = self.core.get_all_policies()
 
         if not policies:
             self.policy_combo.addItem("No policies available", None)
@@ -577,7 +579,7 @@ class CommissionDialog(QDialog):
         policy_id = self.policy_combo.currentData()
 
         if policy_id:
-            policy = self.policy_store.get_policy(policy_id)
+            policy = self.core.get_policy(policy_id)
             if policy:
                 self.selected_policy = policy
 
@@ -615,58 +617,32 @@ class CommissionDialog(QDialog):
 
     def commission(self):
         """Commission the agent with selected policy and wallet."""
-        import logging
-        from eth_account import Account
+        if not self.selected_policy or not self.selected_wallet_address:
+            return
 
-        if self.selected_policy and self.selected_wallet_address:
-            # Generate IntentMandate if requested
-            if self.generate_mandate_checkbox.isChecked():
-                signer_key = None
+        # Generate IntentMandate if requested - all through core
+        mandate = None
+        if self.generate_mandate_checkbox.isChecked():
+            mandate = self.core.generate_intent_mandate(
+                agent_code=self.agent.code,
+                policy_id=self.selected_policy.id,
+                wallet_address=self.selected_wallet_address,
+                sign=True  # Request signing if wallet is unlocked
+            )
+            self.generated_mandate = mandate
 
-                # Try to get the wallet's private key for signing
-                if self.get_wallet_fn:
-                    wallet = self.get_wallet_fn(self.selected_wallet_address)
-                    if wallet:
-                        try:
-                            # Use MultiClawWallet's proper API to get private key
-                            addr_entry = wallet.get_address_by_address(self.selected_wallet_address)
-                            if addr_entry:
-                                signer_key = wallet.get_private_key(addr_entry.id)
+            # Upload to registry if requested (UI operation - shows message box)
+            if self.upload_registry_checkbox.isChecked():
+                self._upload_to_registry(mandate)
 
-                                # Validate the key produces the correct address
-                                account = Account.from_key(signer_key)
-                                if account.address.lower() != self.selected_wallet_address.lower():
-                                    logging.getLogger(__name__).error(
-                                        f"Private key mismatch: expected {self.selected_wallet_address}, "
-                                        f"got {account.address}"
-                                    )
-                                    signer_key = None
-                            else:
-                                logging.getLogger(__name__).warning(
-                                    f"Address {self.selected_wallet_address} not found in wallet"
-                                )
-                        except Exception as e:
-                            logging.getLogger(__name__).warning(
-                                f"Failed to get private key for signing: {e}"
-                            )
-
-                # Generate the mandate
-                self.generated_mandate = generate_intent_mandate(
-                    agent=self.agent,
-                    policy=self.selected_policy,
-                    wallet_address=self.selected_wallet_address,
-                    signer_private_key=signer_key
-                )
-
-                # Store in agent
-                self.agent.intent_mandate = self.generated_mandate
-
-                # Upload to registry if requested
-                if self.upload_registry_checkbox.isChecked():
-                    self._upload_to_registry(self.generated_mandate)
-
-            self.agent.commission(self.selected_policy.id, self.selected_wallet_address)
-            self.accept()
+        # Single call to core - core handles agent state changes
+        self.core.commission_agent(
+            agent_code=self.agent.code,
+            policy_id=self.selected_policy.id,
+            wallet_address=self.selected_wallet_address,
+            intent_mandate=mandate
+        )
+        self.accept()
 
     def get_policy_id(self) -> Optional[str]:
         """Return the selected policy ID."""
@@ -682,69 +658,34 @@ class CommissionDialog(QDialog):
 
         Returns True on success, False on failure.
         """
-        import json
-        import os
-        import requests
+        result = self.core.upload_mandate_to_registry(mandate)
 
-        # Registry URL from environment or default
-        registry_url = os.environ.get("MULTICLAW_REGISTRY_URL", "https://ap2.primer.systems")
+        if result.get("success"):
+            # Store registry info on the mandate
+            self.generated_mandate["registryId"] = result["mandate_id"]
+            self.generated_mandate["registryUrl"] = result["viewer_url"]
 
-        try:
-            response = requests.post(
-                f"{registry_url}/api/mandates",
-                json=mandate,
-                headers={"Content-Type": "application/json"},
-                timeout=10
+            # Show success message with clickable link
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Mandate Published")
+            msg.setIcon(QMessageBox.Icon.Information)
+            msg.setText("Intent Mandate uploaded to AP2 Registry.")
+            msg.setInformativeText(
+                f"<a href='{result['viewer_url']}'>{result['viewer_url']}</a>"
             )
-
-            if response.status_code in (200, 201):
-                result = response.json()
-                # Store the registry ID if returned
-                mandate_id = result.get("id", mandate.get("id"))
-                if mandate_id:
-                    self.generated_mandate["registryId"] = mandate_id
-                    viewer_url = f"{registry_url}/mandate.html?id={mandate_id}"
-                    self.generated_mandate["registryUrl"] = viewer_url
-
-                    # Show success message with clickable link
-                    msg = QMessageBox(self)
-                    msg.setWindowTitle("Mandate Published")
-                    msg.setIcon(QMessageBox.Icon.Information)
-                    msg.setText("Intent Mandate uploaded to AP2 Registry.")
-                    msg.setInformativeText(
-                        f"<a href='{viewer_url}'>{viewer_url}</a>"
-                    )
-                    msg.setTextFormat(Qt.TextFormat.RichText)
-                    msg.setTextInteractionFlags(
-                        Qt.TextInteractionFlag.TextBrowserInteraction
-                    )
-                    msg.exec()
-                return True
-            else:
-                QMessageBox.warning(
-                    self,
-                    "Registry Upload Failed",
-                    f"Could not upload Intent Mandate to registry.\n\n"
-                    f"Status: {response.status_code}\n"
-                    f"The mandate was generated locally but not published."
-                )
-                return False
-
-        except requests.exceptions.ConnectionError:
+            msg.setTextFormat(Qt.TextFormat.RichText)
+            msg.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextBrowserInteraction
+            )
+            msg.exec()
+            return True
+        else:
             QMessageBox.warning(
                 self,
-                "Registry Unavailable",
-                "Could not connect to the AP2 Registry.\n\n"
-                "The mandate was generated locally but not published.\n"
-                "You can upload it manually later."
-            )
-            return False
-        except Exception as e:
-            QMessageBox.warning(
-                self,
-                "Registry Upload Error",
-                f"Error uploading to registry: {e}\n\n"
-                "The mandate was generated locally but not published."
+                "Registry Upload Failed",
+                f"Could not upload Intent Mandate to registry.\n\n"
+                f"{result.get('error', 'Unknown error')}\n"
+                f"The mandate was generated locally but not published."
             )
             return False
 
@@ -756,10 +697,17 @@ class CommissionDialog(QDialog):
 class EditAgentDialog(QDialog):
     """Dialog for editing an agent's policy and signing address assignment."""
 
-    def __init__(self, agent: Agent, policy_store: PolicyStore, wallets: list[WalletInfoLike] = None, parent=None):
+    def __init__(self, agent: Agent, core, wallets: list[WalletInfoLike] = None, parent=None):
+        """
+        Args:
+            agent: Agent to edit
+            core: MultiClaw core instance
+            wallets: List of available wallet addresses
+            parent: Parent widget
+        """
         super().__init__(parent)
         self.agent = agent
-        self.policy_store = policy_store
+        self.core = core
         self.wallets = wallets or []
         self.selected_policy_id: Optional[str] = agent.policy_id
         self.selected_wallet_address: Optional[str] = agent.wallet_address
@@ -780,7 +728,7 @@ class EditAgentDialog(QDialog):
         # Agent info
         info_group = QGroupBox("Agent Info")
         info_layout = QFormLayout(info_group)
-        info_layout.addRow("Code:", QLabel(agent.code))
+        info_layout.addRow("ID:", QLabel(agent.id))
         info_layout.addRow("Status:", QLabel(agent.status))
         info_layout.addRow("Spent Today:", QLabel(agent.format_spent_today()))
         layout.addWidget(info_group)
@@ -792,7 +740,7 @@ class EditAgentDialog(QDialog):
         layout.addWidget(policy_label)
 
         self.policy_combo = QComboBox()
-        policies = self.policy_store.get_all_policies()
+        policies = self.core.get_all_policies()
 
         self.policy_combo.addItem("None (decommission)", None)
         for policy in policies:
@@ -956,7 +904,7 @@ class EditAgentDialog(QDialog):
         self.selected_policy_id = policy_id
 
         if policy_id:
-            policy = self.policy_store.get_policy(policy_id)
+            policy = self.core.get_policy(policy_id)
             if policy:
                 network_names = []
                 for chain_id in policy.networks:
@@ -1027,7 +975,7 @@ class EditAgentDialog(QDialog):
     def _view_mandate(self):
         """Show the mandate viewer dialog."""
         # Get current policy to check for staleness
-        current_policy = self.policy_store.get_policy(self.agent.policy_id) if self.agent.policy_id else None
+        current_policy = self.core.get_policy(self.agent.policy_id) if self.agent.policy_id else None
         dialog = MandateViewerDialog(self.agent, current_policy, self)
         dialog.exec()
         # If mandate was revoked, update button state
@@ -1037,7 +985,7 @@ class EditAgentDialog(QDialog):
 
     def _create_mandate(self):
         """Create a new Intent Mandate for this agent."""
-        policy = self.policy_store.get_policy(self.agent.policy_id)
+        policy = self.core.get_policy(self.agent.policy_id)
         if not policy:
             QMessageBox.warning(self, "Error", "Cannot create mandate: policy not found")
             return
@@ -1055,14 +1003,16 @@ class EditAgentDialog(QDialog):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        # Generate the mandate
-        mandate = generate_intent_mandate(
-            self.agent,
-            policy,
-            self.agent.wallet_address,
-            signer_private_key=None  # Unsigned mandate
+        # Generate and set mandate through core
+        mandate = self.core.generate_intent_mandate(
+            agent_code=self.agent.code,
+            policy_id=self.agent.policy_id,
+            wallet_address=self.agent.wallet_address,
+            sign=False  # Unsigned mandate
         )
+        self.core.set_agent_mandate(self.agent.code, mandate)
 
+        # Update local copy for display
         self.agent.intent_mandate = mandate
         self._mandate_created = True
 
@@ -1091,9 +1041,16 @@ class EditAgentDialog(QDialog):
 class NewPolicyDialog(QDialog):
     """Dialog for creating or editing a spend policy."""
 
-    def __init__(self, parent=None, policy: SpendPolicy = None):
+    def __init__(self, parent=None, policy: SpendPolicy = None, core=None):
+        """
+        Args:
+            parent: Parent widget
+            policy: Existing policy to edit (None for new policy)
+            core: MultiClaw core instance (required for validation)
+        """
         super().__init__(parent)
         self.existing_policy = policy
+        self._core = core
 
         if policy:
             self.setWindowTitle("Edit Spend Policy")
@@ -1235,6 +1192,13 @@ class NewPolicyDialog(QDialog):
             QMessageBox.warning(self, "Validation Error", "Policy name is required.")
             return
 
+        # Check for duplicate name using core
+        if self._core:
+            for policy in self._core.get_all_policies():
+                if policy.name == name and (not self.existing_policy or policy.id != self.existing_policy.id):
+                    QMessageBox.warning(self, "Duplicate Name", f"Policy name '{name}' already exists.")
+                    return
+
         selected_networks = [
             chain_id for chain_id, cb in self.network_checkboxes.items() if cb.isChecked()
         ]
@@ -1276,136 +1240,31 @@ class NewPolicyDialog(QDialog):
             blocked_domains=blocked_domains
         )
 
-
-# ============================================
-# Add Wallet Dialog
-# ============================================
-
-class AddWalletDialog(QDialog):
-    """Dialog for adding a new address (create or import)."""
-
-    BUTTON_WIDTH = 180
-
-    def __init__(self, parent=None, master_password: str = None):
-        super().__init__(parent)
-        self.setWindowTitle("Add Address")
-        self.setFixedWidth(350)
-
-        self.wallet = None
-        self.wallet_name = None
-        self._master_password = master_password  # Use existing password if provided
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-
-        name_label = QLabel("Address Name:")
-        layout.addWidget(name_label)
-
-        self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("e.g., Primary, Testing, Agent Pool...")
-        layout.addWidget(self.name_input)
-
-        layout.addSpacing(8)
-
-        create_btn = QPushButton("Create New")
-        create_btn.setFixedWidth(self.BUTTON_WIDTH)
-        create_btn.clicked.connect(self.on_create)
-        layout.addWidget(create_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
-
-        import_btn = QPushButton("Import Existing")
-        import_btn.setFixedWidth(self.BUTTON_WIDTH)
-        import_btn.clicked.connect(self.on_import)
-        layout.addWidget(import_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
-
-        layout.addStretch()
-
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setFixedWidth(self.BUTTON_WIDTH)
-        cancel_btn.clicked.connect(self.reject)
-        layout.addWidget(cancel_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
-
-    def get_name(self) -> str:
-        """Get the address name (with default if empty)."""
+    def get_policy_data(self) -> dict:
+        """Return policy parameters as dict for core.create_policy()."""
         name = self.name_input.text().strip()
-        return name if name else "Address"
+        networks = [
+            chain_id for chain_id, cb in self.network_checkboxes.items() if cb.isChecked()
+        ]
+        daily_limit_micro = round(self.daily_limit_input.value() * 1_000_000)
+        per_request_max_micro = round(self.per_request_input.value() * 1_000_000)
 
-    def on_create(self):
-        """Create a new address from a fresh seed."""
-        from wallet import PasswordSetupDialog, SeedBackupDialog, Wallet
+        auto_approve_below_micro = None
+        if self.auto_approve_enabled.isChecked():
+            auto_approve_below_micro = round(self.auto_approve_input.value() * 1_000_000)
 
-        # Use master password if provided, otherwise prompt
-        if self._master_password:
-            password = self._master_password
-        else:
-            password_dialog = PasswordSetupDialog(self, is_new=True)
-            if password_dialog.exec() != QDialog.DialogCode.Accepted:
-                return
-            password = password_dialog.password
+        allowed_domains = self._parse_domains(self.allowed_domains_input.toPlainText())
+        blocked_domains = self._parse_domains(self.blocked_domains_input.toPlainText())
 
-        try:
-            wallet = Wallet.create(password, word_count=12)
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to create wallet: {e}")
-            return
-
-        backup_dialog = SeedBackupDialog(wallet.seed_phrase, self)
-        if backup_dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-
-        self.wallet = wallet
-        self.wallet_name = self.get_name()
-        self.accept()
-
-    def on_import(self):
-        """Import an existing address from seed or private key."""
-        from wallet import (
-            ImportChoiceDialog, SeedImportDialog,
-            PrivateKeyImportDialog, PasswordSetupDialog,
-            Wallet, PrivateKeyWallet
-        )
-
-        import_choice = ImportChoiceDialog(self)
-        if import_choice.exec() != QDialog.DialogCode.Accepted:
-            return
-
-        # Use master password if provided, otherwise prompt
-        if self._master_password:
-            password = self._master_password
-        else:
-            password_dialog = PasswordSetupDialog(self, is_new=True)
-            if password_dialog.exec() != QDialog.DialogCode.Accepted:
-                return
-            password = password_dialog.password
-
-        if import_choice.choice == 'seed':
-            seed_dialog = SeedImportDialog(self)
-            if seed_dialog.exec() != QDialog.DialogCode.Accepted:
-                return
-
-            deriv_path = seed_dialog.derivation_path
-            if deriv_path and '{}' not in deriv_path:
-                parts = deriv_path.rstrip('/').split('/')
-                if parts and parts[-1].isdigit():
-                    parts[-1] = '{}'
-                deriv_path = '/'.join(parts)
-
-            self.wallet = Wallet.restore(
-                seed_dialog.seed_phrase,
-                password,
-                deriv_path
-            )
-        else:
-            pkey_dialog = PrivateKeyImportDialog(self)
-            if pkey_dialog.exec() != QDialog.DialogCode.Accepted:
-                return
-
-            self.wallet = PrivateKeyWallet.from_private_key(
-                pkey_dialog.private_key,
-                password
-            )
-
-        self.wallet_name = self.get_name()
-        self.accept()
+        return {
+            "name": name,
+            "networks": networks,
+            "daily_limit_micro": daily_limit_micro,
+            "per_request_max_micro": per_request_max_micro,
+            "auto_approve_below_micro": auto_approve_below_micro,
+            "allowed_domains": allowed_domains if allowed_domains else None,
+            "blocked_domains": blocked_domains if blocked_domains else None,
+        }
 
 
 # ============================================
@@ -1600,9 +1459,16 @@ class TransactionDetailDialog(QDialog):
         "failed": Theme.ERROR,
     }
 
-    def __init__(self, tx, parent=None):
+    def __init__(self, tx, core, parent=None):
+        """
+        Args:
+            tx: Transaction to display
+            core: MultiClaw core instance for verification/receipts
+            parent: Parent widget
+        """
         super().__init__(parent)
         self.tx = tx
+        self.core = core
         self.setWindowTitle(f"Transaction Details - {tx.id[:8]}")
         self.setMinimumWidth(550)
         self.setMinimumHeight(450)
@@ -1632,7 +1498,7 @@ class TransactionDetailDialog(QDialog):
         info_layout = QFormLayout(info_group)
         info_layout.setSpacing(8)
 
-        info_layout.addRow("Agent:", QLabel(f"{tx.agent_name} ({tx.agent_code})"))
+        info_layout.addRow("Agent:", QLabel(f"{tx.agent_name} ({tx.agent_id})"))
         info_layout.addRow("Amount:", QLabel(tx.format_amount()))
         info_layout.addRow("Network:", QLabel(tx.network))
 
@@ -1778,10 +1644,13 @@ class TransactionDetailDialog(QDialog):
 
         layout.addLayout(button_row)
 
-        # Connect to transaction updates if we have a verify button
+        # Poll for transaction updates if we have a verify button
+        # (signing_service uses callbacks, not Qt signals)
         if hasattr(self, 'verify_btn'):
-            from services.signing import signing_service
-            signing_service.transaction_updated.connect(self._on_transaction_updated)
+            from PyQt6.QtCore import QTimer
+            self._update_timer = QTimer(self)
+            self._update_timer.timeout.connect(self._check_for_updates)
+            self._update_timer.start(500)  # Check every 500ms
 
     def _format_verification_status(self) -> str:
         """Format verification status for display."""
@@ -1801,23 +1670,29 @@ class TransactionDetailDialog(QDialog):
 
     def _on_verify_clicked(self):
         """Handle verify button click."""
-        from services.signing import signing_service
         self.verify_btn.setEnabled(False)
-        signing_service.verify_transaction(self.tx)
+        self.tx.verification_status = "pending"  # Optimistic update
+        self.verify_status_label.setText(self._format_verification_status())
+        self.core.verify_transaction(self.tx)
 
-    def _on_transaction_updated(self, tx_id: str):
-        """Handle transaction update signal."""
-        if tx_id == self.tx.id and hasattr(self, 'verify_status_label'):
-            self.verify_status_label.setText(self._format_verification_status())
-            if hasattr(self, 'verify_btn'):
-                self.verify_btn.setEnabled(self.tx.verification_status != "pending")
+    def _check_for_updates(self):
+        """Poll for transaction updates (verification status changes)."""
+        if not hasattr(self, 'verify_status_label'):
+            return
+        # Re-read from dialog's tx object which signing_service updates in place
+        self.verify_status_label.setText(self._format_verification_status())
+        if hasattr(self, 'verify_btn'):
+            self.verify_btn.setEnabled(self.tx.verification_status != "pending")
+        # Stop polling if verification is complete
+        if self.tx.verification_status in ("verified", "failed", "not_found"):
+            if hasattr(self, '_update_timer'):
+                self._update_timer.stop()
 
     def _show_ap2_receipt(self):
         """Show AP2-formatted receipt in a dialog."""
         import json
-        from services.signing import signing_service
 
-        receipt = signing_service.get_receipt(self.tx.id)
+        receipt = self.core.get_receipt(self.tx.id)
 
         if receipt.get("error"):
             QMessageBox.warning(self, "Error", f"Could not get receipt: {receipt.get('error')}")
@@ -1910,7 +1785,7 @@ class MandateViewerDialog(QDialog):
         header.addWidget(title)
 
         mandate_id = self.mandate.get('id', 'unknown')[:8]
-        id_label = QLabel(f"ID: {mandate_id}...")
+        id_label = QLabel(f"Mandate: {mandate_id}...")
         id_label.setFont(QFont(Theme.MONO_FONT, 10))
         id_label.setStyleSheet(f"color: {Theme.CHARCOAL};")
         header.addStretch()
@@ -1924,16 +1799,16 @@ class MandateViewerDialog(QDialog):
         agent_layout.setSpacing(6)
 
         agent_info = self.mandate.get('agent', {})
-        agent_layout.addRow("Name:", QLabel(agent_info.get('name', 'Unknown')))
-        agent_layout.addRow("Code:", QLabel(agent_info.get('code', 'Unknown')))
+        agent_id_label = QLabel(agent_info.get('id', 'Unknown'))
+        agent_id_label.setFont(QFont(Theme.MONO_FONT, 10))
+        agent_layout.addRow("Agent ID:", agent_id_label)
 
-        pubkey = agent_info.get('publicKey', '')
-        if pubkey:
-            pubkey_short = pubkey[:12] + "..." + pubkey[-8:]
-            pubkey_label = QLabel(pubkey_short)
-            pubkey_label.setFont(QFont(Theme.MONO_FONT, 9))
-            pubkey_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            agent_layout.addRow("Public Key:", pubkey_label)
+        fingerprint = agent_info.get('authKeyFingerprint', '')
+        if fingerprint:
+            fp_label = QLabel(fingerprint)
+            fp_label.setFont(QFont(Theme.MONO_FONT, 9))
+            fp_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            agent_layout.addRow("Auth Fingerprint:", fp_label)
 
         layout.addWidget(agent_group)
 
@@ -1943,7 +1818,9 @@ class MandateViewerDialog(QDialog):
         auth_layout.setSpacing(6)
 
         auth = self.mandate.get('authorization', {})
-        auth_layout.addRow("Policy:", QLabel(auth.get('policyName', 'Unknown')))
+        # Show policy name from current_policy if available, otherwise just policy ID
+        policy_display = self.current_policy.name if self.current_policy else auth.get('policyId', 'Unknown')[:8] + '...'
+        auth_layout.addRow("Policy:", QLabel(policy_display))
 
         limits = auth.get('limits', {})
         currency = limits.get('currency', 'USDC')

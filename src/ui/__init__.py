@@ -23,9 +23,9 @@ from .dialogs import (
     AgentRegistrationDialog,
     CommissionDialog,
     NewPolicyDialog,
-    AddWalletDialog,
     SettingsDialog,
 )
+from .console import ConsoleWindow
 
 __all__ = [
     # Theme
@@ -47,6 +47,7 @@ __all__ = [
     "AgentRegistrationDialog",
     "CommissionDialog",
     "NewPolicyDialog",
-    "AddWalletDialog",
     "SettingsDialog",
+    # Console
+    "ConsoleWindow",
 ]

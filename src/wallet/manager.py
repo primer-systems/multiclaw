@@ -5,6 +5,7 @@ Manages the index of all wallets and wallet info metadata.
 """
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -14,6 +15,27 @@ from .crypto import Wallet, PrivateKeyWallet, set_secure_permissions
 
 
 MAX_WALLETS = 999  # Cap at W001-W999
+
+
+def sanitize_filename(name: str) -> str:
+    """
+    Sanitize a string for use as a filename.
+
+    Removes/replaces characters that are invalid in Windows/Unix filenames.
+    This allows Unicode characters (including emoji) while removing dangerous chars.
+    """
+    # Characters invalid in Windows filenames: < > : " / \ | ? *
+    # Also remove control characters (0x00-0x1F)
+    invalid_chars = r'[<>:"/\\|?*\x00-\x1f]'
+    sanitized = re.sub(invalid_chars, '_', name)
+    # Collapse multiple underscores
+    sanitized = re.sub(r'_+', '_', sanitized)
+    # Strip leading/trailing underscores and whitespace
+    sanitized = sanitized.strip('_ ')
+    # If empty after sanitization, use a default
+    if not sanitized:
+        sanitized = 'wallet'
+    return sanitized
 
 
 @dataclass
@@ -50,7 +72,7 @@ class WalletIndex:
         """Load wallet index from disk."""
         if self.index_path.exists():
             try:
-                with open(self.index_path, "r") as f:
+                with open(self.index_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     self._wallets = [WalletInfo.from_dict(w) for w in data]
             except (json.JSONDecodeError, KeyError):
@@ -70,7 +92,7 @@ class WalletIndex:
         """Save wallet index to disk."""
         self.wallet_dir.mkdir(parents=True, exist_ok=True)
         data = [w.to_dict() for w in self._wallets]
-        with open(self.index_path, "w") as f:
+        with open(self.index_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         set_secure_permissions(self.index_path)
 
@@ -161,8 +183,9 @@ class WalletManager:
         return [f.stem for f in self.wallet_dir.glob("*.json")]
 
     def wallet_path(self, name: str) -> Path:
-        """Get the file path for a wallet by name."""
-        return self.wallet_dir / f"{name}.json"
+        """Get the file path for a wallet by name (sanitized for filesystem safety)."""
+        safe_name = sanitize_filename(name)
+        return self.wallet_dir / f"{safe_name}.json"
 
     def create_wallet(self, name: str, password: str,
                       word_count: int = 12) -> Wallet:

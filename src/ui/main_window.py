@@ -9,9 +9,9 @@ from PyQt6.QtWidgets import (
     QTabWidget, QStatusBar, QMenuBar, QMenu, QFrame, QTextEdit,
     QSystemTrayIcon, QStyle, QMessageBox, QApplication, QDialog
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QObject, pyqtSignal
 from PyQt6.QtGui import QAction, QIcon, QFont, QPixmap
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from datetime import datetime
 
 from .theme import Theme
@@ -19,20 +19,71 @@ from .tabs import (
     PoliciesTab, AgentsTab, HistoryTab, WalletTab, NetworkTab, LogTab
 )
 from .dialogs import SettingsDialog
-from models import PolicyStore
-from services import agent_server, signing_service, SigningRequest
+from services import SigningRequest
+from version import __version__
 from wallet import WalletInfo
 from networks import format_address
 from utils import get_app_dir, get_assets_dir
+if TYPE_CHECKING:
+    from core import MultiClaw
+
+
+class GUIApprovalHandler(QObject):
+    """
+    Approval handler for GUI mode.
+
+    Shows dialogs to the user for manual payment approvals.
+    Implements the ApprovalHandler protocol defined in core.interfaces.
+
+    Uses a Qt signal to safely deliver approval requests from the HTTP
+    server thread to the Qt main thread.
+    """
+
+    # Signal to safely cross from HTTP thread to Qt main thread
+    _approval_requested = pyqtSignal(object)
+
+    def __init__(self, main_window: "MainWindow"):
+        super().__init__(parent=main_window)
+        self._main_window = main_window
+        self._pending_dialogs: dict[str, QDialog] = {}
+        self._approval_requested.connect(self._show_approval)
+
+    def request_approval(self, request: SigningRequest) -> None:
+        """
+        Called when a payment needs manual approval.
+
+        Shows the approval dialog to the user. The dialog will call
+        core.approve_request() or core.reject_request() when the user decides.
+        """
+        # Emit signal — Qt guarantees delivery to the main thread
+        self._approval_requested.emit(request)
+
+    def _show_approval(self, request: SigningRequest) -> None:
+        """Show approval dialog on the Qt main thread."""
+        self._main_window.on_approval_needed(request)
+
+    def on_approval_resolved(self, request_id: str, approved: bool, reason: Optional[str] = None) -> None:
+        """
+        Called when an approval has been resolved.
+
+        Allows us to close any open dialogs for this request.
+        """
+        # If we had a dialog open for this request, close it
+        if request_id in self._pending_dialogs:
+            dialog = self._pending_dialogs.pop(request_id)
+            if dialog.isVisible():
+                dialog.close()
 
 
 class MainWindow(QMainWindow):
     """Main application window."""
 
-    def __init__(self):
+    def __init__(self, core: "MultiClaw"):
         super().__init__()
+        self.core = core
         self.signing_enabled = True
         self.server_running = False
+        self._console_window = None
 
         self.setWindowTitle("MultiClaw - Get a Grip on Your Agents")
         self.setMinimumSize(900, 600)
@@ -53,15 +104,13 @@ class MainWindow(QMainWindow):
         self.status = QStatusBar()
         self.setStatusBar(self.status)
 
-        self.policy_store = PolicyStore(get_app_dir())
-
-        # Create all tabs first
-        self.agents_tab = AgentsTab(self.policy_store)
+        # Create all tabs first - all tabs receive core, not store
+        self.agents_tab = AgentsTab(self.core)
         self.agents_tab.activity.connect(self.on_agent_activity)
-        self.policies_tab = PoliciesTab(self.policy_store)
+        self.policies_tab = PoliciesTab(self.core)
         self.policies_tab.policy_deleted.connect(self.on_policy_deleted)
         self.policies_tab.activity.connect(self.on_policy_activity)
-        self.wallet_tab = WalletTab()
+        self.wallet_tab = WalletTab(core=self.core)
         self.wallet_tab.wallets_changed.connect(self.on_wallets_changed)
         self.wallet_tab.wallet_deleted.connect(self.on_wallet_deleted)
         self.wallet_tab.wallet_locked.connect(self.on_wallet_locked)
@@ -69,14 +118,14 @@ class MainWindow(QMainWindow):
         self.wallet_tab.wallet_path_changed.connect(self.on_wallet_path_changed)
         self.wallet_tab.activity.connect(self.update_activity)
         self.wallet_tab.set_agents_query_fn(self._get_agents_for_address)
-        self.network_tab = NetworkTab()
+        self.network_tab = NetworkTab(self.core)
         self.network_tab.activity.connect(self.update_activity)
         self.network_tab.server_toggled.connect(self.on_server_toggled)
         self.network_tab.custom_port_changed.connect(self.on_custom_port_changed)
         self.network_tab.network_toggled.connect(self.on_network_toggled)
         self.network_tab.verify_settlements_changed.connect(self.on_verify_settlements_changed)
         self.network_tab.allow_lan_changed.connect(self.on_allow_lan_changed)
-        self.history_tab = HistoryTab(self.policy_store)
+        self.history_tab = HistoryTab(self.core)
         self.log_tab = LogTab()
 
         # Add tabs in desired order: Agents, Policies, Wallets, Network, History, Logs
@@ -91,18 +140,18 @@ class MainWindow(QMainWindow):
         self.agents_tab.get_wallet_fn = self.wallet_tab.get_unlocked_wallet
 
         # Load and apply settings
+        # GUI-specific settings (window state, paths, etc.)
         self._settings = self._load_settings()
         if self._settings.get("custom_port_enabled", False):
             self.network_tab.set_custom_port_enabled(True)
-        if self._settings.get("verify_settlements", False):
-            self.network_tab.set_verify_settlements(True)
-        if self._settings.get("allow_lan", False):
-            self.network_tab.set_allow_lan(True)
 
-        # Load custom RPC endpoints
-        custom_rpcs = self._settings.get("custom_rpcs", {})
-        # Convert string keys back to int (JSON serializes int keys as strings)
-        custom_rpcs = {int(k): v for k, v in custom_rpcs.items()} if custom_rpcs else {}
+        # Load shared settings from Core (persisted and cross-process synced)
+        core_settings = self.core.settings_manager.settings
+        self.network_tab.set_verify_settlements(core_settings.signing.verify_settlements)
+        self.network_tab.set_allow_lan(core_settings.server.allow_lan)
+
+        # Load custom RPC endpoints from Core settings
+        custom_rpcs = {int(k): v for k, v in core_settings.rpc.endpoints.items() if v}
         self.network_tab.set_custom_rpcs(custom_rpcs)
         self.wallet_tab.set_custom_rpcs(custom_rpcs)
         self.network_tab.rpc_changed.connect(self.on_rpc_changed)
@@ -136,6 +185,7 @@ class MainWindow(QMainWindow):
 
         self.setup_tray()
         self.setup_signing_service()
+        self.setup_event_subscriptions()
 
         # Initialize status indicators
         self.update_status_indicators()
@@ -151,7 +201,7 @@ class MainWindow(QMainWindow):
     def _get_agents_for_address(self, wallet_address: str) -> list:
         """Get all agents linked to a specific wallet address."""
         return [
-            agent for agent in self.policy_store.get_all_agents()
+            agent for agent in self.core.get_all_agents()
             if agent.wallet_address == wallet_address
         ]
 
@@ -163,14 +213,7 @@ class MainWindow(QMainWindow):
 
     def on_wallet_deleted(self, wallet_address: str):
         """Handle wallet deletion - decommission any agents using this wallet."""
-        decommissioned = []
-        for agent in self.policy_store.get_all_agents():
-            if agent.wallet_address == wallet_address:
-                agent.wallet_address = None
-                agent.policy_id = None
-                agent.status = "uncommissioned"
-                self.policy_store.update_agent(agent)
-                decommissioned.append(agent.name)
+        decommissioned = self.core.decommission_agents_for_address(wallet_address)
 
         if decommissioned:
             self.agents_tab.populate_table()
@@ -206,7 +249,7 @@ class MainWindow(QMainWindow):
         self.update_status()
         self.update_status_indicators()
         if running:
-            self.update_activity(f"Server started on port {agent_server.port}")
+            self.update_activity(f"Server started on port {self.core.server_port}")
         else:
             self.update_activity("Server stopped")
 
@@ -217,13 +260,8 @@ class MainWindow(QMainWindow):
 
     def on_rpc_changed(self, chain_id: int, rpc_url: str):
         """Handle custom RPC endpoint change from Network tab."""
-        if "custom_rpcs" not in self._settings:
-            self._settings["custom_rpcs"] = {}
-        if rpc_url:
-            self._settings["custom_rpcs"][str(chain_id)] = rpc_url
-        else:
-            self._settings["custom_rpcs"].pop(str(chain_id), None)
-        self._save_settings()
+        # Core persists this setting
+        self.core.settings_manager.set_rpc_endpoint(chain_id, rpc_url if rpc_url else None)
         # Update wallet tab with new RPCs
         self.wallet_tab.set_custom_rpcs(self.network_tab.get_custom_rpcs())
 
@@ -234,20 +272,17 @@ class MainWindow(QMainWindow):
 
     def on_network_toggled(self, chain_id: int, enabled: bool):
         """Handle network enable/disable from Network tab."""
-        from services.signing import signing_service
-        signing_service.set_network_enabled(chain_id, enabled)
+        self.core.set_network_enabled(chain_id, enabled)
 
     def on_verify_settlements_changed(self, enabled: bool):
         """Handle verify settlements setting change from Network tab."""
-        from services.signing import signing_service
-        signing_service.set_verify_settlements(enabled)
-        self._settings["verify_settlements"] = enabled
-        self._save_settings()
+        # Core persists this setting
+        self.core.set_verify_settlements(enabled)
 
     def on_allow_lan_changed(self, enabled: bool):
         """Handle allow LAN setting change from Network tab."""
-        self._settings["allow_lan"] = enabled
-        self._save_settings()
+        # Core persists this setting
+        self.core.settings_manager.set_allow_lan(enabled)
 
     def on_wallet_locked(self):
         """Handle wallet lock."""
@@ -297,35 +332,40 @@ class MainWindow(QMainWindow):
             self.signing_label.setStyleSheet(f"color: {Theme.RUST};")
 
     def _load_settings(self) -> dict:
-        """Load settings from disk."""
+        """Load GUI-specific settings from disk.
+
+        Note: Shared settings (verify_settlements, networks, etc.) are now
+        managed by Core's SettingsManager. This only loads GUI-specific
+        settings like window state, wallet path, etc.
+        """
         import json
         import logging
-        from utils import get_settings_path
-        settings_path = get_settings_path()
+        from utils import get_app_dir
+        settings_path = get_app_dir() / "gui_settings.json"
         if settings_path.exists():
             try:
-                with open(settings_path, 'r') as f:
+                with open(settings_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
             except Exception as e:
-                logging.getLogger(__name__).warning(f"Failed to load settings: {e}")
+                logging.getLogger(__name__).warning(f"Failed to load GUI settings: {e}")
         return {}
 
     def _save_settings(self):
-        """Save settings to disk."""
+        """Save GUI-specific settings to disk."""
         import json
         import logging
-        from utils import get_settings_path
-        settings_path = get_settings_path()
+        from utils import get_app_dir
+        settings_path = get_app_dir() / "gui_settings.json"
         try:
-            with open(settings_path, 'w') as f:
+            with open(settings_path, 'w', encoding='utf-8') as f:
                 json.dump(self._settings, f, indent=2)
         except Exception as e:
-            logging.getLogger(__name__).error(f"Failed to save settings: {e}")
+            logging.getLogger(__name__).error(f"Failed to save GUI settings: {e}")
 
     def update_status(self):
         """Update status bar."""
-        if agent_server.is_running:
-            self.status.showMessage(f"Listening on localhost:{agent_server.port}")
+        if self.core.is_server_running():
+            self.status.showMessage(f"Listening on localhost:{self.core.server_port}")
         else:
             self.status.showMessage("Server stopped")
 
@@ -458,6 +498,8 @@ class MainWindow(QMainWindow):
         menubar = self.menuBar()
 
         file_menu = menubar.addMenu("File")
+        file_menu.addAction("Console", self.open_console)
+        file_menu.addSeparator()
         file_menu.addAction("Pause", self.pause_all)
         file_menu.addSeparator()
         file_menu.addAction("Export Keys...", self.export_keys)
@@ -479,33 +521,130 @@ class MainWindow(QMainWindow):
         help_menu.addAction("About MultiClaw", self.show_about)
 
     def setup_signing_service(self):
-        """Initialize the signing service with data stores."""
-        signing_service.set_stores(self.policy_store)
-        signing_service.set_wallet_provider(self.wallet_tab.get_unlocked_wallet)
-        agent_server.set_signing_service(signing_service)
+        """Initialize signing service configuration via Core's public API.
 
-        # Sync network enabled state from NetworkTab
-        for chain_id, enabled in self.network_tab.network_enabled.items():
-            signing_service.set_network_enabled(chain_id, enabled)
+        Uses the proper ApprovalHandler pattern instead of overwriting
+        signing service callbacks directly.
+        """
+        # Register GUI approval handler with core
+        # This is the proper interface for handling approval requests
+        self._approval_handler = GUIApprovalHandler(self)
+        self.core.set_approval_handler(self._approval_handler)
 
-        # Sync verify settlements setting
-        if self._settings.get("verify_settlements", False):
-            signing_service.set_verify_settlements(True)
+        # Sync network enabled state from Core settings to NetworkTab
+        for chain_id, enabled in self.core.get_enabled_networks().items():
+            self.network_tab.set_network_enabled(chain_id, enabled)
 
-        # Apply replay window setting
-        replay_window = self._settings.get("replay_window_seconds", 300)
-        signing_service.set_max_request_age(replay_window)
+        # Settings are already loaded from Core in __init__
+        # verify_settlements, allow_lan, replay_window are persisted by Core
 
-        signing_service.activity.connect(self.update_activity)
-        signing_service.approval_needed.connect(self.on_approval_needed)
-        signing_service.request_signed.connect(self.on_request_signed)
-        signing_service.request_rejected.connect(self.on_request_rejected)
-        signing_service.transaction_updated.connect(self.on_transaction_updated)
+    def setup_event_subscriptions(self):
+        """Subscribe to core EventBus events.
+
+        This is the proper way to receive notifications from Core.
+        GUI subscribes to EventBus just like Console does.
+        """
+        from core.events import EventType
+
+        def on_agent_event(event):
+            """Refresh agents tab when agents change."""
+            QTimer.singleShot(0, self._refresh_agents_tab)
+
+        def on_policy_event(event):
+            """Refresh policies tab when policies change."""
+            QTimer.singleShot(0, self._refresh_policies_tab)
+
+        def on_transaction_event(event):
+            """Refresh history tab when transactions change."""
+            QTimer.singleShot(0, self._refresh_history_tab)
+
+        def on_wallet_event(event):
+            """Refresh wallet tab and status when wallet state changes."""
+            QTimer.singleShot(0, self._refresh_wallet_state)
+
+        def on_activity_event(event):
+            """Handle activity log messages from Core."""
+            message = event.data.get("message", "")
+            is_error = event.data.get("is_error", False)
+            QTimer.singleShot(0, lambda: self.update_activity(message, is_error))
+
+        def on_settings_event(event):
+            """Handle settings changes from Core (cross-process sync)."""
+            QTimer.singleShot(0, self._apply_core_settings)
+
+        # Subscribe to agent events
+        self.core.event_bus.subscribe(EventType.AGENT_CREATED, on_agent_event)
+        self.core.event_bus.subscribe(EventType.AGENT_UPDATED, on_agent_event)
+        self.core.event_bus.subscribe(EventType.AGENT_DELETED, on_agent_event)
+
+        # Subscribe to policy events
+        self.core.event_bus.subscribe(EventType.POLICY_CREATED, on_policy_event)
+        self.core.event_bus.subscribe(EventType.POLICY_UPDATED, on_policy_event)
+        self.core.event_bus.subscribe(EventType.POLICY_DELETED, on_policy_event)
+
+        # Subscribe to transaction events
+        self.core.event_bus.subscribe(EventType.TRANSACTION_CREATED, on_transaction_event)
+        self.core.event_bus.subscribe(EventType.TRANSACTION_UPDATED, on_transaction_event)
+
+        # Subscribe to wallet events
+        self.core.event_bus.subscribe(EventType.WALLET_LOCKED, on_wallet_event)
+        self.core.event_bus.subscribe(EventType.WALLET_UNLOCKED, on_wallet_event)
+
+        # Subscribe to activity events (logging/status messages)
+        self.core.event_bus.subscribe(EventType.ACTIVITY, on_activity_event)
+
+        # Subscribe to settings events (cross-process sync)
+        self.core.event_bus.subscribe(EventType.SETTINGS_CHANGED, on_settings_event)
+
+    def _refresh_agents_tab(self):
+        """Refresh the agents tab display."""
+        if hasattr(self.agents_tab, 'populate_table'):
+            self.agents_tab.populate_table()
+
+    def _refresh_policies_tab(self):
+        """Refresh the policies tab display."""
+        if hasattr(self.policies_tab, 'populate_table'):
+            self.policies_tab.populate_table()
+
+    def _refresh_history_tab(self):
+        """Refresh the history tab display."""
+        if hasattr(self.history_tab, 'refresh'):
+            self.history_tab.refresh()
+
+    def _refresh_wallet_state(self):
+        """Refresh wallet-related UI state."""
+        # Sync wallet tab state from core (handles console-initiated changes)
+        self.wallet_tab.sync_from_core()
+        self.update_status()
+        self.update_status_indicators()
+        # Also refresh agents tab since it shows wallet addresses
+        self._refresh_agents_tab()
+
+    def _apply_core_settings(self):
+        """Apply settings from Core (handles cross-process settings sync)."""
+        core_settings = self.core.settings_manager.settings
+
+        # Update network tab with new settings
+        self.network_tab.set_verify_settlements(core_settings.signing.verify_settlements)
+        self.network_tab.set_allow_lan(core_settings.server.allow_lan)
+
+        # Update network enabled states
+        for chain_id_str, enabled in core_settings.signing.enabled_networks.items():
+            try:
+                chain_id = int(chain_id_str)
+                self.network_tab.set_network_enabled(chain_id, enabled)
+            except ValueError:
+                pass
+
+        # Update custom RPC endpoints
+        custom_rpcs = {int(k): v for k, v in core_settings.rpc.endpoints.items() if v}
+        self.network_tab.set_custom_rpcs(custom_rpcs)
+        self.wallet_tab.set_custom_rpcs(custom_rpcs)
 
     def on_approval_needed(self, request: SigningRequest):
         """Handle a signing request that needs manual approval."""
         self.update_activity(
-            f"Approval needed: {request.agent_name} ({request.agent_code}) requests ${request.amount_micro/1_000_000:.2f} USDC",
+            f"Approval needed: {request.agent_name} ({request.agent_id}) requests ${request.amount_micro/1_000_000:.2f} USDC",
             is_warning=True
         )
 
@@ -570,27 +709,15 @@ class MainWindow(QMainWindow):
         result = msg.exec()
 
         if result == QMessageBox.StandardButton.Yes:
-            response = signing_service.approve_request(request.id)
+            response = self.core.approve_request(request.id)
             if response.get("status") == "success":
                 self.update_activity(f"Approved: {amount_str} for {request.agent_name}")
             else:
                 self.update_activity(f"Approval failed: {response.get('error')}", is_error=True)
                 QMessageBox.warning(self, "Signing Failed", response.get("error", "Unknown error"))
         else:
-            signing_service.reject_request(request.id, "User rejected")
+            self.core.reject_request(request.id, "User rejected")
             self.update_activity(f"Rejected: {amount_str} for {request.agent_name}", is_warning=True)
-
-    def on_request_signed(self, agent_name: str, agent_code: str, wallet_id: str, amount_micro: int):
-        """Handle a successfully signed request - refresh UI only (logging done by signing service)."""
-        self.agents_tab.populate_table()
-
-    def on_request_rejected(self, agent_code: str, reason: str):
-        """Handle a rejected request."""
-        self.update_activity(f"Rejected request from {agent_code}: {reason}", is_warning=True)
-
-    def on_transaction_updated(self, transaction_id: str):
-        """Handle transaction status update - refresh the history tab."""
-        self.history_tab.refresh()
 
     def setup_tray(self):
         """Set up system tray icon with context menu."""
@@ -635,13 +762,24 @@ class MainWindow(QMainWindow):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self.show_and_activate()
 
+    def open_console(self):
+        """Open the console window."""
+        from .console import ConsoleWindow
+
+        if self._console_window is None or not self._console_window.isVisible():
+            self._console_window = ConsoleWindow(self.core, self)
+            self._console_window.show()
+        else:
+            self._console_window.activateWindow()
+            self._console_window.raise_()
+
     def pause_all(self):
         """Pause all activity: stop server, lock wallet, disable signing."""
         actions = []
 
         # Stop server if running
         if self.server_running:
-            agent_server.stop()
+            self.core.stop_server()
             actions.append("server stopped")
 
         # Lock wallet if unlocked (and wallet is actually set up)
@@ -710,7 +848,7 @@ class MainWindow(QMainWindow):
 
             # Apply replay window setting
             replay_window = new_settings.get("replay_window_seconds", 300)
-            signing_service.set_max_request_age(replay_window)
+            self.core.set_max_request_age(replay_window)
 
     def register_agent(self):
         """Open the agent registration dialog."""
@@ -719,7 +857,7 @@ class MainWindow(QMainWindow):
 
     def suspend_all_agents(self):
         """Suspend all active agents."""
-        active_agents = [a for a in self.policy_store.get_all_agents() if a.status == "active"]
+        active_agents = [a for a in self.core.get_all_agents() if a.status == "active"]
 
         if not active_agents:
             QMessageBox.information(
@@ -740,8 +878,7 @@ class MainWindow(QMainWindow):
 
         if reply == QMessageBox.StandardButton.Yes:
             for agent in active_agents:
-                agent.suspend()
-                self.policy_store.update_agent(agent)
+                self.core.suspend_agent(agent.code)
 
             self.agents_tab.populate_table()
             self.update_activity(f"Suspended {len(active_agents)} agent(s)", is_warning=True)
@@ -769,7 +906,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(tagline)
 
         # Version
-        version = QLabel("Version 1.0.0")
+        version = QLabel(f"Version {__version__}")
         version.setStyleSheet(f"color: {Theme.CHARCOAL};")
         layout.addWidget(version)
 
@@ -886,8 +1023,8 @@ class MainWindow(QMainWindow):
             )
         else:
             # Actually close - stop server first
-            if agent_server.is_running:
-                agent_server.stop()
+            if self.core.is_server_running():
+                self.core.stop_server()
             event.accept()
 
     def changeEvent(self, event):

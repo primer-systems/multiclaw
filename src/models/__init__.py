@@ -12,7 +12,7 @@ from .policy import SpendPolicy
 from .agent import (
     Agent,
     generate_agent_token,
-    generate_agent_code,
+    generate_agent_id,
     verify_agent_hmac,
     verify_bearer_token,
     hash_bearer_token,
@@ -35,7 +35,7 @@ __all__ = [
     "SpendPolicy",
     "Agent",
     "generate_agent_token",
-    "generate_agent_code",
+    "generate_agent_id",
     "verify_agent_hmac",
     "verify_bearer_token",
     "hash_bearer_token",

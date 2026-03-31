@@ -6,7 +6,7 @@ Contains:
 - PrivateKeyWallet: Single-key wallet
 - WalletManager: Multi-wallet support
 - WalletIndex, WalletInfo: Wallet metadata tracking
-- Dialogs: UI for wallet setup and management
+- Dialogs: UI for wallet setup and management (import separately to avoid circular imports)
 """
 
 from .crypto import (
@@ -29,28 +29,13 @@ from .manager import (
     WalletInfo,
     MAX_WALLETS,
 )
-from .dialogs import (
-    WelcomeDialog,
-    PasswordSetupDialog,
-    ImportChoiceDialog,
-    SeedImportDialog,
-    PrivateKeyImportDialog,
-    SeedBackupDialog,
-    UnlockDialog,
-    run_wallet_setup,
-    # New multi-seed wallet dialogs
-    AddAddressDialog,
-    SeedSelectionDialog,
-    DerivationBrowserDialog,
-    NewSeedDialog,
-    ImportSeedToWalletDialog,
-    ImportPrivateKeyToWalletDialog,
-    MultiClawWalletUnlockDialog,
-    CreateWalletWizard,
-    # Wallet file management dialogs
-    AddWalletChoiceDialog,
-    WalletFilenameDialog,
-)
+
+# NOTE: Dialogs are NOT imported at package level to avoid circular imports.
+# UI code that needs dialogs should import directly:
+#   from wallet.dialogs import WelcomeDialog, CreateWalletWizard, etc.
+#
+# This allows core code to do `from wallet import MultiClawWallet` without
+# pulling in Qt dependencies.
 
 __all__ = [
     # Crypto
@@ -71,25 +56,5 @@ __all__ = [
     "WalletIndex",
     "WalletInfo",
     "MAX_WALLETS",
-    # Dialogs
-    "WelcomeDialog",
-    "PasswordSetupDialog",
-    "ImportChoiceDialog",
-    "SeedImportDialog",
-    "PrivateKeyImportDialog",
-    "SeedBackupDialog",
-    "UnlockDialog",
-    "run_wallet_setup",
-    # New multi-seed wallet dialogs
-    "AddAddressDialog",
-    "SeedSelectionDialog",
-    "DerivationBrowserDialog",
-    "NewSeedDialog",
-    "ImportSeedToWalletDialog",
-    "ImportPrivateKeyToWalletDialog",
-    "MultiClawWalletUnlockDialog",
-    "CreateWalletWizard",
-    # Wallet file management dialogs
-    "AddWalletChoiceDialog",
-    "WalletFilenameDialog",
+    # NOTE: Dialogs not exported here - import from wallet.dialogs directly
 ]

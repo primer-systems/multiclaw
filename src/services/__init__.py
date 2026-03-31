@@ -7,13 +7,12 @@ Contains:
 """
 
 from .server import AgentServer, agent_server, server_stats
-from .signing import SigningService, signing_service, SigningRequest
+from .signing import SigningService, SigningRequest
 
 __all__ = [
     "AgentServer",
     "agent_server",
     "server_stats",
     "SigningService",
-    "signing_service",
     "SigningRequest",
 ]

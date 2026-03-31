@@ -32,9 +32,9 @@ class Transaction:
     """A payment signing request and its result."""
     id: str
     timestamp: str                    # ISO format - when request was received
-    agent_id: str
+    agent_id: str                     # Short agent ID (e.g., "ABC123") - user-facing
     agent_name: str
-    agent_code: str
+    agent_code: str                   # Agent internal code (UUID) - for storage lookups
     amount_micro: int                 # Amount in micro-USDC (6 decimals: 1_000_000 = $1.00)
     recipient: str                    # payTo address or resource URL
     network: str                      # Network identifier (CAIP-2 or v1 name)
@@ -216,7 +216,7 @@ class Transaction:
                 "mandateId": self.mandate_id,
                 "policyName": policy_name,
                 "agent": {
-                    "code": self.agent_code,
+                    "id": self.agent_id,
                     "name": self.agent_name,
                 }
             },

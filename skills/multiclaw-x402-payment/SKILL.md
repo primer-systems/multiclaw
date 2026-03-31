@@ -47,7 +47,7 @@ PAYMENT_HEADER="eyJhY2NlcHRzIjpbey..."  # The value from Payment-Required header
 curl -X POST http://localhost:9402/sign \
   -H "Content-Type: application/json" \
   -d '{
-    "agent_code": "YOUR_CODE",
+    "agent_id": "YOUR_CODE",
     "signature": "AT_your_token_here",
     "payment_required": "'"$PAYMENT_HEADER"'",
     "request_url": "https://api.example.com/resource"
@@ -66,7 +66,7 @@ If `MULTICLAW_AUTH_MODE=hmac`, you need to sign requests:
 
 ```bash
 # Set your credentials
-CODE="YOUR_CODE"
+AGENT_ID="YOUR_ID"
 TOKEN="AT_your_token_hex"
 TIMESTAMP=$(date +%s)
 URL="https://api.example.com/resource"
@@ -75,7 +75,7 @@ URL="https://api.example.com/resource"
 PAYMENT_HEADER="eyJhY2NlcHRzIjpbey..."
 
 # Build the message to sign (must be sorted alphabetically)
-MSG="{\"agent_code\":\"$CODE\",\"payment_required\":\"$PAYMENT_HEADER\",\"request_url\":\"$URL\",\"timestamp\":$TIMESTAMP}"
+MSG="{\"agent_id\":\"$AGENT_ID\",\"payment_required\":\"$PAYMENT_HEADER\",\"request_url\":\"$URL\",\"timestamp\":$TIMESTAMP}"
 
 # Sign it (requires openssl)
 SIG=$(echo -n "$MSG" | openssl dgst -sha256 -mac HMAC -macopt hexkey:${TOKEN:3} | cut -d' ' -f2)
@@ -83,7 +83,7 @@ SIG=$(echo -n "$MSG" | openssl dgst -sha256 -mac HMAC -macopt hexkey:${TOKEN:3} 
 # Send to MultiClaw
 curl -X POST http://localhost:9402/sign \
   -H "Content-Type: application/json" \
-  -d "{\"agent_code\":\"$CODE\",\"signature\":\"SIG:$TIMESTAMP:$SIG\",\"payment_required\":\"$PAYMENT_HEADER\",\"request_url\":\"$URL\"}"
+  -d "{\"agent_id\":\"$AGENT_ID\",\"signature\":\"SIG:$TIMESTAMP:$SIG\",\"payment_required\":\"$PAYMENT_HEADER\",\"request_url\":\"$URL\"}"
 ```
 
 Or use the Python helper below if you prefer.
@@ -111,9 +111,9 @@ Just grab that header value (`eyJhY2NlcHRzIjpbey...`) and send it to MultiClaw. 
 ## Prerequisites
 
 - MultiClaw desktop app running with Agent Link enabled
-- Your agent registered in MultiClaw with an agent code and token
+- Your agent registered in MultiClaw with an agent ID and token
 - Environment variables set:
-  - `MULTICLAW_AGENT_CODE`: Your agent code (e.g., "ABC123")
+  - `MULTICLAW_AGENT_ID`: Your agent ID (e.g., "ABC123")
   - `MULTICLAW_AGENT_TOKEN`: Your token (e.g., "AT_...")
   - `MULTICLAW_AUTH_MODE`: Authentication mode (`bearer` or `hmac`)
   - `MULTICLAW_URL` (optional): MultiClaw endpoint, defaults to `http://localhost:9402`
@@ -147,7 +147,7 @@ import os
 
 # payment_required = the Payment-Required header value from the 402 response
 signed = sign_request(
-    os.environ["MULTICLAW_AGENT_CODE"],
+    os.environ["MULTICLAW_AGENT_ID"],
     os.environ["MULTICLAW_AGENT_TOKEN"],
     payment_required,
     request_url="https://api.example.com/resource"  # optional but recommended
@@ -161,13 +161,13 @@ result = send_to_multiclaw(signed)
 ```python
 import hmac, hashlib, json, time, os
 
-code = os.environ["MULTICLAW_AGENT_CODE"]
+agent_id = os.environ["MULTICLAW_AGENT_ID"]
 token = os.environ["MULTICLAW_AGENT_TOKEN"]
 timestamp = int(time.time())
 
 # payment_required = the Payment-Required header value from the 402 response
 msg_data = {
-    "agent_code": code,
+    "agent_id": agent_id,
     "timestamp": timestamp,
     "payment_required": payment_required
 }
@@ -178,7 +178,7 @@ msg = json.dumps(msg_data, separators=(',', ':'), sort_keys=True).encode()
 sig = hmac.new(bytes.fromhex(token[3:]), msg, hashlib.sha256).hexdigest()
 
 request = {
-    "agent_code": code,
+    "agent_id": agent_id,
     "signature": f"SIG:{timestamp}:{sig}",
     "payment_required": payment_required,
     "request_url": "https://api.example.com/resource"
@@ -200,7 +200,7 @@ POST to MultiClaw's `/sign` endpoint:
 **Bearer mode:**
 ```json
 {
-  "agent_code": "YOUR_CODE",
+  "agent_id": "YOUR_CODE",
   "signature": "AT_your_token",
   "payment_required": "eyJhY2NlcHRzIjpbey...",
   "request_url": "https://api.example.com/resource"
@@ -210,7 +210,7 @@ POST to MultiClaw's `/sign` endpoint:
 **HMAC mode:**
 ```json
 {
-  "agent_code": "YOUR_CODE",
+  "agent_id": "YOUR_CODE",
   "signature": "SIG:<timestamp>:<hex_signature>",
   "payment_required": "eyJhY2NlcHRzIjpbey...",
   "request_url": "https://api.example.com/resource"
@@ -229,7 +229,7 @@ To make multiple purchases to the same endpoint, provide an `idempotency_key`:
 
 ```json
 {
-  "agent_code": "YOUR_CODE",
+  "agent_id": "YOUR_CODE",
   "signature": "AT_your_token",
   "payment_required": "eyJhY2NlcHRzIjpbey...",
   "request_url": "https://api.example.com/resource",
@@ -260,7 +260,7 @@ result1_retry = sign_request(payment_required, idempotency_key="weather-query-1"
 ```json
 {
   "status": "error",
-  "code": "PAYMENT_ALREADY_SETTLED",
+  "id": "PAYMENT_ALREADY_SETTLED",
   "error": "This payment was already settled on-chain. Use idempotency_key for a fresh payment.",
   "previous_transaction_id": "abc123...",
   "hint": "Add 'idempotency_key': 'unique-string' to your request"
@@ -339,7 +339,7 @@ To retry a failed/interrupted request, resubmit the **exact same signed payload*
 {
   "status": "error",
   "error": "Exceeds daily limit",
-  "code": "EXCEEDS_DAILY_LIMIT"
+  "id": "EXCEEDS_DAILY_LIMIT"
 }
 ```
 
@@ -378,7 +378,7 @@ POST ${MULTICLAW_URL}/mandate
 Content-Type: application/json
 
 {
-  "agent_code": "${MULTICLAW_AGENT_CODE}",
+  "agent_id": "${MULTICLAW_AGENT_ID}",
   "signature": "AT_your_token"
 }
 ```
@@ -387,17 +387,17 @@ Content-Type: application/json
 ```python
 import hmac, hashlib, json, time, os
 
-code = os.environ["MULTICLAW_AGENT_CODE"]
+agent_id = os.environ["MULTICLAW_AGENT_ID"]
 token = os.environ["MULTICLAW_AGENT_TOKEN"]
 timestamp = int(time.time())
 
-# Sign over action + agent_code + timestamp
-msg_data = {"action": "get_mandate", "agent_code": code, "timestamp": timestamp}
+# Sign over action + agent_id + timestamp
+msg_data = {"action": "get_mandate", "agent_id": agent_id, "timestamp": timestamp}
 msg = json.dumps(msg_data, separators=(',', ':'), sort_keys=True).encode()
 sig = hmac.new(bytes.fromhex(token[3:]), msg, hashlib.sha256).hexdigest()
 
 request = {
-    "agent_code": code,
+    "agent_id": agent_id,
     "signature": f"SIG:{timestamp}:{sig}"
 }
 ```
@@ -408,7 +408,7 @@ request = {
 {
   "status": "ok",
   "agent_name": "My Agent",
-  "agent_code": "ABC123",
+  "agent_id": "ABC123",
   "spent_today_micro": 500000,
   "remaining_today_micro": 4500000,
   "policy": {
@@ -473,7 +473,7 @@ POST ${MULTICLAW_URL}/callback
 Content-Type: application/json
 
 {
-  "agent_code": "${MULTICLAW_AGENT_CODE}",
+  "agent_id": "${MULTICLAW_AGENT_ID}",
   "transaction_id": "<from sign response>",
   "event": "submitted" | "settled" | "failed",
   "tx_hash": "0x...",
@@ -525,7 +525,7 @@ POST ${MULTICLAW_URL}/sign
 Content-Type: application/json
 
 {
-  "agent_code": "${MULTICLAW_AGENT_CODE}",
+  "agent_id": "${MULTICLAW_AGENT_ID}",
   "signature": "SIG:<timestamp>:<hex_signature>",
   "x402_data": {
     "x402Version": 1,
@@ -560,7 +560,7 @@ MultiClaw supports these networks (use either v1 name or CAIP-2 format):
 import hmac, hashlib, json, time
 
 timestamp = int(time.time())
-message_data = {"agent_code": agent_code, "timestamp": timestamp, "x402_data": x402_data}
+message_data = {"agent_id": agent_id, "timestamp": timestamp, "x402_data": x402_data}
 message = json.dumps(message_data, separators=(',', ':'), sort_keys=True).encode()
 sig = hmac.new(bytes.fromhex(token[3:]), message, hashlib.sha256).hexdigest()
 ```
@@ -593,7 +593,7 @@ Response:
   "intent": {
     "type": "IntentMandate",
     "policyName": "Standard Policy",
-    "agent": {"code": "ABC123", "name": "My Agent"}
+    "agent": {"id": "ABC123", "name": "My Agent"}
   },
   "authorization": {
     "method": "auto",

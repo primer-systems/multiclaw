@@ -8,6 +8,54 @@ import sys
 from pathlib import Path
 
 
+# ============================================
+# Name Validation
+# ============================================
+
+class NameValidationError(ValueError):
+    """Raised when a name fails validation."""
+    pass
+
+
+def validate_name(name: str, field: str = "Name") -> str:
+    """
+    Validate a display name for agents, policies, or addresses.
+
+    Names must:
+    - Be non-empty (after stripping whitespace)
+    - Contain only printable ASCII characters (codes 32-126)
+    - Be 100 characters or less
+
+    Args:
+        name: The name to validate
+        field: Field name for error messages (e.g., "Policy name", "Agent name")
+
+    Returns:
+        The validated name (stripped of leading/trailing whitespace)
+
+    Raises:
+        NameValidationError: If name is invalid
+    """
+    if not name:
+        raise NameValidationError(f"{field} cannot be empty")
+
+    name = name.strip()
+
+    if not name:
+        raise NameValidationError(f"{field} cannot be empty or whitespace only")
+
+    if len(name) > 100:
+        raise NameValidationError(f"{field} must be 100 characters or less")
+
+    invalid = [c for c in name if not (32 <= ord(c) <= 126)]
+    if invalid:
+        raise NameValidationError(
+            f"{field} contains invalid characters. Only printable ASCII is allowed."
+        )
+
+    return name
+
+
 def get_app_dir() -> Path:
     """Get the application data directory."""
     if getattr(sys, 'frozen', False):
