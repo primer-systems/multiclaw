@@ -155,6 +155,12 @@ MultiClaw.exe wallet status
 
 **Headless Mode** — Run `MultiClaw.exe --headless` for a daemon with no user interface, exposing only the agent API. Useful for servers or remote operation.
 
+### Built-in Console
+
+For a hybrid approach, the GUI includes a built-in terminal console (File → Console) that accepts the same commands as the CLI — without leaving the application.
+
+![Console](docs/consoless.png)
+
 ### Single Instance
 
 When GUI mode is running, CLI commands connect to the same instance via HTTP — changes made in the terminal appear live in the GUI. This follows the standard daemon pattern used by Docker, Bitcoin Core, and similar tools.
