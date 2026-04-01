@@ -8,7 +8,7 @@ A desktop x402 payment manager for AI agents, by Primer.
 
 Delegate spending authority to agents without sharing private keys. Implements the full AP2 flow: intent, authorization, settlement, and receipt. Accepts direct A2A x402 as well as HTTP x402.
 
-![Architecture](docs/multiclaw_wide.png)
+![Architecture](docs/v2wide.png)
 
 ## The Problem
 
@@ -65,7 +65,7 @@ Each agent can have a signed **Intent Mandate** — an AP2 VDC documenting:
 
 Mandates are signed with EIP-191 and can be published to the [AP2 Registry](https://ap2.primer.systems). Merchants can query the registry by agent code to verify authorization before accepting payment — confirming the agent is backed by a real human with defined spending limits.
 
-![Internal Architecture](docs/multiclaw_close.png)
+![Internal Architecture](docs/v2close.png)
 
 ## Accountability & Receipts
 
@@ -137,6 +137,8 @@ MultiClaw uses a **layered core-outwards architecture** with clean separation be
 ```
 
 ### Deployment Modes
+
+![Modes](docs/v2modes.png)
 
 **GUI Mode** (default) — Double-click `MultiClaw.exe` for the full desktop application with tabs, dialogs, and approval prompts.
 
