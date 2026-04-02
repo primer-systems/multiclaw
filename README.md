@@ -1,4 +1,4 @@
-# MultiClaw v2.1.0
+# MultiClaw v2.1.1
 
 ![Tests](https://github.com/primer-systems/multiclaw/actions/workflows/test.yml/badge.svg)
 
@@ -8,7 +8,7 @@ A desktop x402 payment manager for AI agents, by Primer.
 
 Delegate spending authority to agents without sharing private keys. Implements the full AP2 flow: intent, authorization, settlement, and receipt. Accepts direct A2A x402 as well as HTTP x402.
 
-![Architecture](docs/v2wide.png)
+![Architecture](https://raw.githubusercontent.com/primer-systems/multiclaw/main/docs/v2wide.png)
 
 ## The Problem
 
@@ -46,7 +46,7 @@ Any agent framework can integrate via HTTP to `localhost:9402` — Claude, GPT, 
 - **Human Approval** — Payments above threshold trigger a dialog in the app
 - **AP2 Intent Mandates** — Signed VDCs document authorization, publishable to AP2 registry for merchant verification
 
-![Screenshot](docs/manifoldss2.png)
+![Screenshot](https://raw.githubusercontent.com/primer-systems/multiclaw/main/docs/manifoldss2.png)
 
 ## Where Authorization Happens
 
@@ -65,7 +65,7 @@ Each agent can have a signed **Intent Mandate** — an AP2 VDC documenting:
 
 Mandates are signed with EIP-191 and can be published to the [AP2 Registry](https://ap2.primer.systems). Merchants can query the registry by agent code to verify authorization before accepting payment — confirming the agent is backed by a real human with defined spending limits.
 
-![Internal Architecture](docs/v2close.png)
+![Internal Architecture](https://raw.githubusercontent.com/primer-systems/multiclaw/main/docs/v2close.png)
 
 ## Accountability & Receipts
 
@@ -104,7 +104,7 @@ When a policy violation occurs (limit exceeded, blocked domain, manual rejection
 
 The demo video shows this in action: an agent exceeds its daily limit and is forced to reconsider its approach.
 
-![Screenshot](docs/manifoldss1.png)
+![Screenshot](https://raw.githubusercontent.com/primer-systems/multiclaw/main/docs/manifoldss1.png)
 
 ## Technical Details
 
@@ -138,7 +138,7 @@ MultiClaw uses a **layered core-outwards architecture** with clean separation be
 
 ### Deployment Modes
 
-![Modes](docs/v2modes.png)
+![Modes](https://raw.githubusercontent.com/primer-systems/multiclaw/main/docs/v2modes.png)
 
 **GUI Mode** (default) — Double-click `MultiClaw.exe` for the full desktop application with tabs, dialogs, and approval prompts.
 
@@ -159,7 +159,7 @@ MultiClaw.exe wallet status
 
 For a hybrid approach, the GUI includes a built-in terminal console (File → Console) that accepts the same commands as the CLI — without leaving the application.
 
-![Console](docs/consoless.png)
+![Console](https://raw.githubusercontent.com/primer-systems/multiclaw/main/docs/consoless.png)
 
 ### Single Instance
 
