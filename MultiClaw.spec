@@ -28,7 +28,7 @@ mnemonic_datas = collect_data_files('mnemonic')
 eth_account_datas = collect_data_files('eth_account')
 
 a = Analysis(
-    [str(src_dir / 'multiclaw.py')],
+    [str(src_dir / 'multiclaw_entry.py')],
     pathex=[str(src_dir)],
     binaries=[],
     datas=[
@@ -144,8 +144,8 @@ if platform.system() == 'Darwin':
         info_plist={
             'CFBundleName': 'MultiClaw',
             'CFBundleDisplayName': 'MultiClaw',
-            'CFBundleVersion': '1.0.0',
-            'CFBundleShortVersionString': '1.0.0',
+            'CFBundleVersion': '2.1.0',
+            'CFBundleShortVersionString': '2.1.0',
             'NSHighResolutionCapable': True,
             'LSMinimumSystemVersion': '10.15',
         },

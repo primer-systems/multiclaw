@@ -34,14 +34,14 @@ def temp_data_dir():
 @pytest.fixture
 def core(temp_data_dir):
     """Create a MultiClaw instance with temporary data directory."""
-    from core import MultiClaw
+    from multiclaw.core import MultiClaw
     return MultiClaw(data_dir=temp_data_dir)
 
 
 @pytest.fixture
 def event_collector(core):
     """Collect all events emitted by Core."""
-    from core.events import EventType
+    from multiclaw.core.events import EventType
 
     events = []
 
@@ -370,7 +370,7 @@ class TestEventBus:
 
     def test_emit_activity(self, core, event_collector):
         """emit_activity should create ACTIVITY events."""
-        from core.events import EventType
+        from multiclaw.core.events import EventType
 
         core.event_bus.emit_activity("Test message", is_error=False)
 
@@ -381,7 +381,7 @@ class TestEventBus:
 
     def test_multiple_subscribers(self, core):
         """Multiple subscribers should all receive events."""
-        from core.events import EventType
+        from multiclaw.core.events import EventType
 
         received = []
 

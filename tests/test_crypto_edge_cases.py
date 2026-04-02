@@ -22,7 +22,7 @@ import pytest
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from wallet.crypto import (
+from multiclaw.wallet.crypto import (
     Wallet, encrypt_seed, decrypt_seed, derive_key,
     NO_PASSWORD_SENTINEL, ETH_DERIVATION_PATH
 )
@@ -39,7 +39,7 @@ def temp_data_dir():
 @pytest.fixture
 def core(temp_data_dir):
     """Create a MultiClaw instance with temporary data directory."""
-    from core import MultiClaw
+    from multiclaw.core import MultiClaw
     return MultiClaw(data_dir=temp_data_dir)
 
 
@@ -507,7 +507,7 @@ class TestAgentSecretEncryption:
 
     def test_agent_secret_encryption_round_trip(self):
         """Agent secret encryption should be reversible with correct password."""
-        from models.agent import encrypt_agent_secret, decrypt_agent_secret
+        from multiclaw.models.agent import encrypt_agent_secret, decrypt_agent_secret
 
         secret = secrets.token_hex(32)
         password = "wallet_password"
@@ -520,7 +520,7 @@ class TestAgentSecretEncryption:
 
     def test_agent_secret_wrong_password_rejected(self):
         """Agent secret with wrong password should fail."""
-        from models.agent import encrypt_agent_secret, decrypt_agent_secret
+        from multiclaw.models.agent import encrypt_agent_secret, decrypt_agent_secret
 
         secret = secrets.token_hex(32)
         agent_id = "ABC123"
@@ -532,7 +532,7 @@ class TestAgentSecretEncryption:
 
     def test_agent_secret_wrong_agent_id_rejected(self):
         """Agent secret with wrong agent_id (AAD) should fail."""
-        from models.agent import encrypt_agent_secret, decrypt_agent_secret
+        from multiclaw.models.agent import encrypt_agent_secret, decrypt_agent_secret
 
         secret = secrets.token_hex(32)
         password = "password"

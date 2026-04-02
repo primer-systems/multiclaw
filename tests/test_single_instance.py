@@ -14,10 +14,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from core import MultiClaw
-from daemon.admin_api import AdminAPIServer
-from client.core_client import CoreClient, CoreClientError
-from commands import CommandHandler
+from multiclaw.core import MultiClaw
+from multiclaw.daemon.admin_api import AdminAPIServer
+from multiclaw.client.core_client import CoreClient, CoreClientError
+from multiclaw.commands import CommandHandler
 
 TEST_PORT = 19403  # Use non-standard port to avoid conflicts with real instances
 
@@ -37,7 +37,7 @@ def core_and_server(tmp_path_factory):
 @pytest.fixture
 def client(core_and_server):
     """CoreClient connected to the test server."""
-    from client.core_client import ClientConfig
+    from multiclaw.client.core_client import ClientConfig
     cfg = ClientConfig(admin_port=TEST_PORT, timeout=5.0, retry_count=1)
     return CoreClient(cfg)
 
@@ -56,13 +56,13 @@ def direct_core(core_and_server):
 class TestConnection:
 
     def test_try_connect_finds_server(self, core_and_server):
-        from client.core_client import ClientConfig
+        from multiclaw.client.core_client import ClientConfig
         cfg = ClientConfig(admin_port=TEST_PORT, timeout=2.0, retry_count=1)
         c = CoreClient(cfg)
         assert c.is_daemon_running()
 
     def test_try_connect_returns_none_on_wrong_port(self):
-        from client.core_client import ClientConfig
+        from multiclaw.client.core_client import ClientConfig
         cfg = ClientConfig(admin_port=19999, timeout=0.5, retry_count=1, retry_delay=0.0)
         c = CoreClient(cfg)
         assert not c.is_daemon_running()

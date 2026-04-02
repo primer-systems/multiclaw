@@ -18,7 +18,7 @@ import pytest
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from models import SpendPolicy
+from multiclaw.models import SpendPolicy
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def temp_data_dir():
 @pytest.fixture
 def core(temp_data_dir):
     """Create a MultiClaw instance."""
-    from core import MultiClaw
+    from multiclaw.core import MultiClaw
     return MultiClaw(data_dir=temp_data_dir)
 
 

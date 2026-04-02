@@ -14,6 +14,7 @@ from typing import Dict, Set, List, Tuple
 import pytest
 
 SRC_DIR = Path(__file__).parent.parent / "src"
+MULTICLAW_DIR = SRC_DIR / "multiclaw"
 
 
 def extract_core_calls(filepath: Path) -> Dict[str, List[Tuple[int, str]]]:
@@ -53,7 +54,7 @@ def get_gui_core_calls() -> Dict[str, Set[str]]:
     Returns dict mapping method name to set of files that call it.
     """
     result = {}
-    ui_dir = SRC_DIR / 'ui'
+    ui_dir = MULTICLAW_DIR / 'ui'
 
     if not ui_dir.exists():
         return result
@@ -73,7 +74,7 @@ def get_gui_core_calls() -> Dict[str, Set[str]]:
         for method in calls:
             if method not in result:
                 result[method] = set()
-            result[method].add(str(filepath.relative_to(SRC_DIR)))
+            result[method].add(str(filepath.relative_to(MULTICLAW_DIR)))
 
     return result
 
@@ -93,12 +94,12 @@ def get_console_core_calls() -> Dict[str, Set[str]]:
     # We need to scan both console.py and the commands/ directory
     files_to_scan = []
 
-    console_file = SRC_DIR / 'ui' / 'console.py'
+    console_file = MULTICLAW_DIR / 'ui' / 'console.py'
     if console_file.exists():
         files_to_scan.append(console_file)
 
     # CommandHandler and command modules that console.py uses
-    commands_dir = SRC_DIR / 'commands'
+    commands_dir = MULTICLAW_DIR / 'commands'
     if commands_dir.exists():
         for filepath in commands_dir.glob('*.py'):
             if filepath.name != '__init__.py':
@@ -109,7 +110,7 @@ def get_console_core_calls() -> Dict[str, Set[str]]:
         for method in calls:
             if method not in result:
                 result[method] = set()
-            result[method].add(str(filepath.relative_to(SRC_DIR)))
+            result[method].add(str(filepath.relative_to(MULTICLAW_DIR)))
 
     return result
 
@@ -244,7 +245,7 @@ class TestConsoleCommands:
         Returns dict mapping handler name to (lineno, first_line) tuples.
         """
         handlers = {}
-        console_file = SRC_DIR / 'ui' / 'console.py'
+        console_file = MULTICLAW_DIR / 'ui' / 'console.py'
 
         if not console_file.exists():
             return handlers
@@ -300,8 +301,8 @@ class TestEventSubscriptions:
 
     def test_event_subscriptions(self):
         """List event subscriptions for GUI and Console."""
-        gui_file = SRC_DIR / 'ui' / 'main_window.py'
-        console_file = SRC_DIR / 'ui' / 'console.py'
+        gui_file = MULTICLAW_DIR / 'ui' / 'main_window.py'
+        console_file = MULTICLAW_DIR / 'ui' / 'console.py'
 
         gui_events = self.get_event_subscriptions(gui_file) if gui_file.exists() else set()
         console_events = self.get_event_subscriptions(console_file) if console_file.exists() else set()

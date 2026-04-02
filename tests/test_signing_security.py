@@ -24,8 +24,8 @@ import pytest
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from models import Agent, SpendPolicy, verify_agent_hmac, verify_bearer_token, hash_bearer_token
-from models.agent import generate_agent_token, encrypt_agent_secret
+from multiclaw.models import Agent, SpendPolicy, verify_agent_hmac, verify_bearer_token, hash_bearer_token
+from multiclaw.models.agent import generate_agent_token, encrypt_agent_secret
 
 
 @pytest.fixture
@@ -39,13 +39,13 @@ def temp_data_dir():
 @pytest.fixture
 def core(temp_data_dir):
     """Create a MultiClaw instance with temporary data directory."""
-    from core import MultiClaw
+    from multiclaw.core import MultiClaw
     return MultiClaw(data_dir=temp_data_dir)
 
 
 @pytest.fixture
 def signing_service(core):
-    """Get the signing service from core."""
+    """Get the signing service from multiclaw.core."""
     return core._signing_service
 
 
@@ -466,7 +466,7 @@ class TestX402AmountValidation:
 
     def test_negative_amount_rejected(self):
         """Negative amount should be rejected or handled safely."""
-        from services.signing import validate_x402_request
+        from multiclaw.services.signing import validate_x402_request
 
         x402_data = {
             "accepts": [{
@@ -484,7 +484,7 @@ class TestX402AmountValidation:
 
     def test_extremely_large_amount(self):
         """Extremely large amount should be handled without overflow."""
-        from services.signing import validate_x402_request
+        from multiclaw.services.signing import validate_x402_request
 
         x402_data = {
             "accepts": [{
@@ -501,7 +501,7 @@ class TestX402AmountValidation:
 
     def test_float_amount_rejected(self):
         """Float amounts should be rejected or converted properly."""
-        from services.signing import validate_x402_request
+        from multiclaw.services.signing import validate_x402_request
 
         x402_data = {
             "accepts": [{
@@ -517,7 +517,7 @@ class TestX402AmountValidation:
 
     def test_string_amount_handling(self):
         """String amounts should be handled properly."""
-        from services.signing import validate_x402_request
+        from multiclaw.services.signing import validate_x402_request
 
         x402_data = {
             "accepts": [{
@@ -533,7 +533,7 @@ class TestX402AmountValidation:
 
     def test_null_amount_rejected(self):
         """Null amount should be rejected."""
-        from services.signing import validate_x402_request
+        from multiclaw.services.signing import validate_x402_request
 
         x402_data = {
             "accepts": [{
@@ -558,7 +558,7 @@ class TestX402PayloadValidation:
 
     def test_missing_accepts_array(self):
         """Missing accepts array should be rejected."""
-        from services.signing import validate_x402_request
+        from multiclaw.services.signing import validate_x402_request
 
         x402_data = {
             "other": "data"
@@ -570,7 +570,7 @@ class TestX402PayloadValidation:
 
     def test_empty_accepts_array(self):
         """Empty accepts array should be rejected."""
-        from services.signing import validate_x402_request
+        from multiclaw.services.signing import validate_x402_request
 
         x402_data = {
             "accepts": []
@@ -582,7 +582,7 @@ class TestX402PayloadValidation:
 
     def test_accepts_not_array(self):
         """Non-array accepts should be rejected."""
-        from services.signing import validate_x402_request
+        from multiclaw.services.signing import validate_x402_request
 
         x402_data = {
             "accepts": "not an array"
@@ -593,7 +593,7 @@ class TestX402PayloadValidation:
 
     def test_missing_network_rejected(self):
         """Missing network in accepts should be rejected."""
-        from services.signing import validate_x402_request
+        from multiclaw.services.signing import validate_x402_request
 
         x402_data = {
             "accepts": [{
@@ -609,7 +609,7 @@ class TestX402PayloadValidation:
 
     def test_missing_payto_rejected(self):
         """Missing payTo in accepts should be rejected."""
-        from services.signing import validate_x402_request
+        from multiclaw.services.signing import validate_x402_request
 
         x402_data = {
             "accepts": [{
@@ -625,7 +625,7 @@ class TestX402PayloadValidation:
 
     def test_missing_asset_rejected(self):
         """Missing asset in accepts should be rejected."""
-        from services.signing import validate_x402_request
+        from multiclaw.services.signing import validate_x402_request
 
         x402_data = {
             "accepts": [{
@@ -641,7 +641,7 @@ class TestX402PayloadValidation:
 
     def test_non_dict_x402_rejected(self):
         """Non-dict x402 data should be rejected."""
-        from services.signing import validate_x402_request
+        from multiclaw.services.signing import validate_x402_request
 
         is_valid, version, error = validate_x402_request("not a dict")
         assert is_valid is False
@@ -675,7 +675,7 @@ class TestIdempotencyCache:
 
     def test_cache_pruning_on_overflow(self, signing_service):
         """Cache should prune old entries when full."""
-        from services.signing import SIGNATURE_CACHE_MAX_SIZE, SIGNATURE_CACHE_PRUNE_COUNT
+        from multiclaw.services.signing import SIGNATURE_CACHE_MAX_SIZE, SIGNATURE_CACHE_PRUNE_COUNT
 
         # Verify constants are reasonable
         assert SIGNATURE_CACHE_MAX_SIZE > 0

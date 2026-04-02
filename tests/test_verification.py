@@ -20,7 +20,7 @@ import pytest
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from models import Transaction
+from multiclaw.models import Transaction
 
 
 @pytest.fixture
@@ -34,13 +34,13 @@ def temp_data_dir():
 @pytest.fixture
 def core(temp_data_dir):
     """Create a MultiClaw instance."""
-    from core import MultiClaw
+    from multiclaw.core import MultiClaw
     return MultiClaw(data_dir=temp_data_dir)
 
 
 @pytest.fixture
 def signing_service(core):
-    """Get the signing service from core."""
+    """Get the signing service from multiclaw.core."""
     return core._signing_service
 
 
@@ -401,7 +401,7 @@ class TestAutoVerification:
     def test_requeue_stuck_verifications(self, temp_data_dir, core, signing_service):
         """Stuck pending verifications should be requeued on startup."""
         # Create a transaction stuck in pending verification
-        from models.store import PolicyStore
+        from multiclaw.models.store import PolicyStore
 
         tx = Transaction.create(
             agent_id="ABC123",

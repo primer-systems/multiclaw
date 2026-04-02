@@ -13,8 +13,8 @@ from unittest.mock import patch, MagicMock
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from cli import parse_global_flags, ScriptContext, handle_input_request
-from commands.result import CommandResult
+from multiclaw.cli import parse_global_flags, ScriptContext, handle_input_request
+from multiclaw.commands.result import CommandResult
 
 
 class TestParseGlobalFlags:
@@ -166,13 +166,13 @@ class TestScriptableIntegration:
     @pytest.fixture
     def core(self, temp_data_dir):
         """Create a Core instance with temp directory."""
-        from core import MultiClaw
+        from multiclaw.core import MultiClaw
         return MultiClaw(data_dir=temp_data_dir)
 
     @pytest.fixture
     def handler(self, core):
         """Create a CommandHandler instance."""
-        from commands import CommandHandler
+        from multiclaw.commands import CommandHandler
         return CommandHandler(core)
 
     def test_policy_delete_with_yes_flag(self, handler, core):

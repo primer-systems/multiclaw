@@ -13,8 +13,8 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from core.settings import SettingsManager, AppSettings
-from commands import CommandHandler
+from multiclaw.core.settings import SettingsManager, AppSettings
+from multiclaw.commands import CommandHandler
 
 
 @pytest.fixture
@@ -34,7 +34,7 @@ def settings_manager(temp_data_dir):
 @pytest.fixture
 def core(temp_data_dir):
     """Create a Core instance with temp directory."""
-    from core import MultiClaw
+    from multiclaw.core import MultiClaw
     return MultiClaw(data_dir=temp_data_dir)
 
 
@@ -321,7 +321,7 @@ class TestSettingsEventEmission:
 
     def test_settings_changed_event(self, core):
         """SETTINGS_CHANGED event is emitted on change."""
-        from core.events import EventType
+        from multiclaw.core.events import EventType
 
         events_received = []
 

@@ -19,8 +19,9 @@ from typing import Set, List, Tuple
 
 import pytest
 
-# Get the src directory
+# Get the src directory and package root
 SRC_DIR = Path(__file__).parent.parent / "src"
+MULTICLAW_DIR = SRC_DIR / "multiclaw"
 
 
 def get_python_files(directory: Path) -> List[Path]:
@@ -90,7 +91,7 @@ class TestNoQtInCore:
         violations = []
 
         for dirname in self.FORBIDDEN_DIRS:
-            dirpath = SRC_DIR / dirname
+            dirpath = MULTICLAW_DIR / dirname
             if not dirpath.exists():
                 continue
 
@@ -98,7 +99,7 @@ class TestNoQtInCore:
                 imports = get_imports_from_file(filepath)
                 for module, lineno, line in imports:
                     if any(qt in module for qt in self.QT_MODULES):
-                        violations.append((filepath.relative_to(SRC_DIR), module, lineno, line))
+                        violations.append((filepath.relative_to(MULTICLAW_DIR), module, lineno, line))
 
         return violations
 
@@ -117,14 +118,14 @@ class TestNoQtInCore:
         all_imports = {}
 
         for dirname in self.FORBIDDEN_DIRS:
-            dirpath = SRC_DIR / dirname
+            dirpath = MULTICLAW_DIR / dirname
             if not dirpath.exists():
                 continue
 
             for filepath in get_python_files(dirpath):
                 imports = get_imports_from_file(filepath)
                 if imports:
-                    rel_path = str(filepath.relative_to(SRC_DIR))
+                    rel_path = str(filepath.relative_to(MULTICLAW_DIR))
                     all_imports[rel_path] = [(m, l) for m, l, _ in imports]
 
         # This test always passes but prints import summary
@@ -150,7 +151,7 @@ class TestUIUsesPublicAPI:
     def get_private_access_violations(self) -> List[Tuple[Path, str, int, str]]:
         """Find UI code accessing Core's private attributes."""
         violations = []
-        ui_dir = SRC_DIR / 'ui'
+        ui_dir = MULTICLAW_DIR / 'ui'
 
         if not ui_dir.exists():
             return violations
@@ -170,7 +171,7 @@ class TestUIUsesPublicAPI:
                     matches = pattern.findall(line)
                     for match in matches:
                         violations.append((
-                            filepath.relative_to(SRC_DIR),
+                            filepath.relative_to(MULTICLAW_DIR),
                             match,
                             lineno,
                             line.strip()
@@ -207,7 +208,7 @@ class TestUIImportRestrictions:
     def get_forbidden_imports(self) -> List[Tuple[Path, str, int, str]]:
         """Find forbidden imports in UI code."""
         violations = []
-        ui_dir = SRC_DIR / 'ui'
+        ui_dir = MULTICLAW_DIR / 'ui'
 
         if not ui_dir.exists():
             return violations
@@ -226,7 +227,7 @@ class TestUIImportRestrictions:
                             for alias in node.names:
                                 if alias.name in self.FORBIDDEN_MODEL_IMPORTS:
                                     violations.append((
-                                        filepath.relative_to(SRC_DIR),
+                                        filepath.relative_to(MULTICLAW_DIR),
                                         alias.name,
                                         node.lineno,
                                         lines[node.lineno - 1].strip()
@@ -253,7 +254,7 @@ class TestCoreMethodsExist:
     def get_core_method_calls(self) -> Set[str]:
         """Find all method calls on 'self.core' in UI code."""
         methods = set()
-        ui_dir = SRC_DIR / 'ui'
+        ui_dir = MULTICLAW_DIR / 'ui'
 
         if not ui_dir.exists():
             return methods
@@ -276,7 +277,7 @@ class TestCoreMethodsExist:
     def get_core_public_methods(self) -> Set[str]:
         """Get all public methods and properties on MultiClaw class."""
         methods = set()
-        core_file = SRC_DIR / 'core' / 'multiclaw.py'
+        core_file = MULTICLAW_DIR / 'core' / 'multiclaw.py'
 
         if not core_file.exists():
             return methods
@@ -356,8 +357,8 @@ class TestEventBusUsage:
 
         # Check both multiclaw.py and events.py (emit_activity is in events.py)
         files_to_check = [
-            SRC_DIR / 'core' / 'multiclaw.py',
-            SRC_DIR / 'core' / 'events.py',
+            MULTICLAW_DIR / 'core' / 'multiclaw.py',
+            MULTICLAW_DIR / 'core' / 'events.py',
         ]
 
         for core_file in files_to_check:
@@ -410,7 +411,7 @@ class TestWalletDirectAccess:
     def get_direct_wallet_creation(self) -> List[Tuple[Path, str, int, str]]:
         """Find direct wallet creation in UI code."""
         violations = []
-        ui_dir = SRC_DIR / 'ui'
+        ui_dir = MULTICLAW_DIR / 'ui'
 
         if not ui_dir.exists():
             return violations
@@ -429,7 +430,7 @@ class TestWalletDirectAccess:
                     matches = pattern.findall(line)
                     for match in matches:
                         violations.append((
-                            filepath.relative_to(SRC_DIR),
+                            filepath.relative_to(MULTICLAW_DIR),
                             match,
                             lineno,
                             line.strip()

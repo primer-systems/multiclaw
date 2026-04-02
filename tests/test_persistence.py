@@ -24,8 +24,8 @@ import pytest
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from models.store import PolicyStore
-from models import SpendPolicy, Agent
+from multiclaw.models.store import PolicyStore
+from multiclaw.models import SpendPolicy, Agent
 
 
 @pytest.fixture
@@ -45,7 +45,7 @@ def policy_store(temp_data_dir):
 @pytest.fixture
 def core(temp_data_dir):
     """Create a MultiClaw instance."""
-    from core import MultiClaw
+    from multiclaw.core import MultiClaw
     return MultiClaw(data_dir=temp_data_dir)
 
 
@@ -327,12 +327,12 @@ class TestDataIntegrity:
 
     def test_agent_round_trip(self, temp_data_dir):
         """Agent should survive save/load cycle unchanged."""
-        from models.agent import generate_agent_id, generate_agent_token
+        from multiclaw.models.agent import generate_agent_id, generate_agent_token
 
         store1 = PolicyStore(temp_data_dir)
 
         # Create agent manually
-        from models import Agent
+        from multiclaw.models import Agent
         agent = Agent(
             id=generate_agent_id(),
             code=str(__import__('uuid').uuid4()),
@@ -357,7 +357,7 @@ class TestDataIntegrity:
         """Transaction should survive save/load cycle unchanged."""
         store1 = PolicyStore(temp_data_dir)
 
-        from models import Transaction
+        from multiclaw.models import Transaction
         tx = Transaction.create(
             agent_id="ABC123",
             agent_name="TestAgent",
@@ -479,7 +479,7 @@ class TestTransactionHistory:
 
     def test_transactions_ordered_by_time(self, policy_store):
         """Transactions should maintain time ordering."""
-        from models import Transaction
+        from multiclaw.models import Transaction
         import time
 
         for i in range(5):
@@ -500,7 +500,7 @@ class TestTransactionHistory:
 
     def test_clear_transactions(self, policy_store):
         """Clearing transactions should remove all."""
-        from models import Transaction
+        from multiclaw.models import Transaction
 
         for i in range(3):
             tx = Transaction.create(

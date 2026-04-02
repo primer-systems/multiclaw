@@ -35,13 +35,13 @@ def temp_data_dir():
 @pytest.fixture
 def core(temp_data_dir):
     """Create a MultiClaw instance with temporary data directory."""
-    from core import MultiClaw
+    from multiclaw.core import MultiClaw
     return MultiClaw(data_dir=temp_data_dir)
 
 
 @pytest.fixture
 def signing_service(core):
-    """Get the signing service from core."""
+    """Get the signing service from multiclaw.core."""
     return core._signing_service
 
 
@@ -274,7 +274,7 @@ class TestPolicyLimitConsistency:
 
     def test_negative_limits_rejected(self, core):
         """Negative limits should be rejected."""
-        from models import SpendPolicy
+        from multiclaw.models import SpendPolicy
 
         with pytest.raises(ValueError):
             SpendPolicy.from_dict({

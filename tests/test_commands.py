@@ -12,7 +12,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from commands import CommandHandler, CommandResult
+from multiclaw.commands import CommandHandler, CommandResult
 
 
 @pytest.fixture
@@ -26,7 +26,7 @@ def temp_data_dir(tmp_path):
 @pytest.fixture
 def core(temp_data_dir):
     """Create a Core instance with temp directory."""
-    from core import MultiClaw
+    from multiclaw.core import MultiClaw
     return MultiClaw(data_dir=temp_data_dir)
 
 

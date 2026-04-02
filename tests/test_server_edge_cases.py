@@ -34,13 +34,13 @@ def temp_data_dir():
 @pytest.fixture
 def core(temp_data_dir):
     """Create a MultiClaw instance."""
-    from core import MultiClaw
+    from multiclaw.core import MultiClaw
     return MultiClaw(data_dir=temp_data_dir)
 
 
 @pytest.fixture
 def signing_service(core):
-    """Get the signing service from core."""
+    """Get the signing service from multiclaw.core."""
     return core._signing_service
 
 
@@ -53,14 +53,14 @@ class TestRateLimiting:
 
     def test_rate_limiter_has_requests_per_minute(self):
         """Rate limiter should have configurable requests per minute."""
-        from services.server import RateLimiter
+        from multiclaw.services.server import RateLimiter
 
         limiter = RateLimiter(requests_per_minute=300)
         assert limiter.requests_per_minute == 300
 
     def test_rate_limiter_allows_normal_traffic(self):
         """Normal request rate should be allowed (not rate limited)."""
-        from services.server import RateLimiter
+        from multiclaw.services.server import RateLimiter
 
         limiter = RateLimiter()
         client_ip = "192.168.1.100"
@@ -71,7 +71,7 @@ class TestRateLimiting:
 
     def test_rate_limiter_blocks_excessive_traffic(self):
         """Excessive request rate should be blocked."""
-        from services.server import RateLimiter
+        from multiclaw.services.server import RateLimiter
 
         # Create limiter with low limit for testing
         limiter = RateLimiter(requests_per_minute=5)
@@ -86,7 +86,7 @@ class TestRateLimiting:
 
     def test_rate_limiter_window_reset(self):
         """Rate limit tracking should work."""
-        from services.server import RateLimiter
+        from multiclaw.services.server import RateLimiter
 
         limiter = RateLimiter()
         client_ip = "192.168.1.102"
@@ -98,7 +98,7 @@ class TestRateLimiting:
 
     def test_rate_limiter_different_clients_independent(self):
         """Different clients should have independent rate limits."""
-        from services.server import RateLimiter
+        from multiclaw.services.server import RateLimiter
 
         # Create limiter with low limit for testing
         limiter = RateLimiter(requests_per_minute=3)
@@ -132,7 +132,7 @@ class TestRequestParsing:
             }]
         }
 
-        from services.signing import validate_x402_request
+        from multiclaw.services.signing import validate_x402_request
         is_valid, version, error = validate_x402_request(x402_data)
         assert is_valid is True
 
@@ -205,7 +205,7 @@ class TestRequestSizes:
         }
 
         # Should not crash
-        from services.signing import validate_x402_request
+        from multiclaw.services.signing import validate_x402_request
         is_valid, version, error = validate_x402_request(x402_data)
 
     def test_many_accepts_entries(self):
@@ -221,7 +221,7 @@ class TestRequestSizes:
 
         x402_data = {"accepts": accepts}
 
-        from services.signing import validate_x402_request
+        from multiclaw.services.signing import validate_x402_request
         is_valid, version, error = validate_x402_request(x402_data)
         # Should use first accept
         assert is_valid is True
@@ -364,7 +364,7 @@ class TestServerStatistics:
 
     def test_stats_object_exists(self):
         """Server stats object should exist with correct attributes."""
-        from services.server import server_stats
+        from multiclaw.services.server import server_stats
 
         assert hasattr(server_stats, 'signed')
         assert hasattr(server_stats, 'rejected')
@@ -372,7 +372,7 @@ class TestServerStatistics:
 
     def test_stats_increment_correctly(self):
         """Server stats should increment correctly."""
-        from services.server import server_stats
+        from multiclaw.services.server import server_stats
 
         initial_signed = server_stats.signed
 
@@ -383,7 +383,7 @@ class TestServerStatistics:
 
     def test_stats_reset(self):
         """Server stats should reset correctly."""
-        from services.server import server_stats
+        from multiclaw.services.server import server_stats
 
         server_stats.signed = 100
         server_stats.rejected = 50
@@ -402,7 +402,7 @@ class TestHeaderHandling:
 
     def test_missing_authorization_header(self, signing_service):
         """Missing Authorization header should be handled."""
-        from models import Agent
+        from multiclaw.models import Agent
 
         agent = Agent(
             id="TEST123",
@@ -429,7 +429,7 @@ class TestHeaderHandling:
 
     def test_empty_authorization_header(self, signing_service):
         """Empty Authorization header should be handled."""
-        from models import Agent
+        from multiclaw.models import Agent
 
         agent = Agent(
             id="TEST123",
