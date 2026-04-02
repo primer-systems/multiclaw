@@ -1,4 +1,4 @@
-# MultiClaw v2.0.0
+# MultiClaw v2.1.0
 
 ![Tests](https://github.com/primer-systems/multiclaw/actions/workflows/test.yml/badge.svg)
 
@@ -202,20 +202,20 @@ Running from source:
 ```bash
 git clone https://github.com/primer-systems/multiclaw.git
 cd multiclaw
-pip install -r requirements.txt
+pip install -e .
 
 # GUI mode (default)
-python src/multiclaw.py
+multiclaw
 
 # CLI interactive REPL
-python src/multiclaw.py --cli
+multiclaw --cli
 
 # Single command (scriptable)
-python src/multiclaw.py wallet status
-python src/multiclaw.py policy create standard --day 100 --yes
+multiclaw wallet status
+multiclaw policy create standard --day 100 --yes
 
 # Headless daemon (no GUI, agent server only)
-python src/multiclaw.py --headless
+multiclaw --headless
 ```
 
 Run tests:
@@ -231,6 +231,11 @@ pytest tests/ -v
 - [Medium Article](https://medium.com/@primersystems/the-x402-agent-manifold-d51e72ee029d)
 
 ## Changelog
+
+### v2.1.0
+- Published to PyPI — install with `pip install multiclaw` or `pip install multiclaw[gui]`
+- Restructured as a proper Python package (`src/multiclaw/`)
+- Assets bundled with pip install (logo, icons)
 
 ### v2.0.0
 - Added CLI mode with interactive REPL and scriptable single commands
