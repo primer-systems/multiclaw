@@ -38,6 +38,8 @@ Agent hits paywall → 402 + Payment-Required header
 
 Any agent framework can integrate via HTTP to `localhost:9402` — Claude, GPT, LangChain, custom agents, or any system that can make HTTP requests. Bearer tokens for simplicity, HMAC-SHA256 for production security. The pattern is intentionally simple: **detect paywall → request signature → retry with payment → report settlement**.
 
+![System Interactions](https://raw.githubusercontent.com/primer-systems/multiclaw/main/docs/multiclaw_interactions.png)
+
 ## Authorization Controls
 
 - **Spend Policies** — Daily limits, per-request caps, auto-approve thresholds
