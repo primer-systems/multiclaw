@@ -18,6 +18,7 @@ from .theme import Theme
 from .tabs import (
     PoliciesTab, AgentsTab, HistoryTab, WalletTab, NetworkTab, LogTab
 )
+from .market_tab import MarketTab
 from .dialogs import SettingsDialog
 from ..services import SigningRequest
 from ..version import __version__
@@ -127,12 +128,15 @@ class MainWindow(QMainWindow):
         self.network_tab.allow_lan_changed.connect(self.on_allow_lan_changed)
         self.history_tab = HistoryTab(self.core)
         self.log_tab = LogTab()
+        self.market_tab = MarketTab()
+        self.market_tab.activity.connect(self.update_activity)
 
-        # Add tabs in desired order: Agents, Policies, Wallets, Network, History, Logs
+        # Add tabs in desired order: Agents, Policies, Wallets, Network, Market, History, Logs
         self.tabs.addTab(self.agents_tab, "Agents")
         self.tabs.addTab(self.policies_tab, "Policies")
         self.tabs.addTab(self.wallet_tab, "Wallet")
         self.tabs.addTab(self.network_tab, "Network")
+        self.tabs.addTab(self.market_tab, "Market")
         self.tabs.addTab(self.history_tab, "History")
         self.tabs.addTab(self.log_tab, "Logs")
 

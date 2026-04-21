@@ -20,6 +20,75 @@ You have access to the MultiClaw payment authorization system. The MultiClaw URL
 
 When you encounter an HTTP 402 Payment Required response from any x402-enabled API, you can request payment authorization through MultiClaw. The user will approve or deny the payment in their MultiClaw desktop app. Your spending is controlled by the user's pay policies.
 
+## Discovering x402 Services
+
+Before making paid requests, you can discover available x402 services on **Agentic.Market**, the public marketplace operated by Coinbase. Nearly 500 services are listed across categories like Inference, Data, Search, Media, Social, Trading, and Infra — all payable per-request in USDC on Base with no API keys or accounts needed.
+
+### Search for services
+
+```bash
+# List all services (returns JSON with id, name, description, category, endpoints, pricing)
+curl https://api.agentic.market/v1/services?limit=500
+
+# Search by keyword
+curl "https://api.agentic.market/v1/services/search?q=weather"
+```
+
+### Response structure
+
+Each service has:
+- `name`, `description`, `category`, `domain`, `provider`
+- `networks` — typically `["Base"]`
+- `endpoints[]` — each with `url`, `method`, `description`, and `pricing.amount` (USDC)
+
+### Example: find and use a service
+
+```python
+import json, urllib.request
+
+# 1. Search for web search services
+url = "https://api.agentic.market/v1/services/search?q=web+search"
+data = json.loads(urllib.request.urlopen(url).read())
+
+for svc in data.get("services", []):
+    for ep in svc.get("endpoints", []):
+        price = ep.get("pricing", {}).get("amount", "?")
+        print(f"{svc['name']}: {ep['method']} {ep['url']} — ${price} USDC")
+
+# 2. Pick an endpoint and call it — you'll get HTTP 402
+# 3. Forward the Payment-Required header to MultiClaw /sign (see below)
+# 4. Retry with the signed payment header
+```
+
+### Budget-aware discovery
+
+Combine marketplace search with your MultiClaw mandate to filter services you can actually afford:
+
+```python
+# Get your spending limits from MultiClaw
+mandate = fetch_mandate()  # POST /mandate (see below)
+remaining = mandate.get("remaining_today_micro", 0)
+per_req_max = mandate.get("policy", {}).get("per_request_max_micro")
+
+# Filter marketplace results by budget
+for svc in marketplace_results:
+    for ep in svc["endpoints"]:
+        cost_micro = int(float(ep["pricing"]["amount"]) * 1_000_000)
+        if per_req_max and cost_micro > per_req_max:
+            continue  # Exceeds per-request policy
+        if cost_micro > remaining:
+            continue  # Would blow daily budget
+        # This endpoint is within your limits — safe to call
+```
+
+### Other discovery resources
+
+- **Browse the marketplace**: https://agentic.market
+- **LLM-optimized summary**: `GET https://agentic.market/llms.txt`
+- **Full catalog as markdown**: `GET https://agentic.market/api/markdown`
+
+---
+
 ## Step 1: Check Your Authentication Mode
 
 **Check your `MULTICLAW_AUTH_MODE` environment variable.** Your config explicitly tells you which mode to use:

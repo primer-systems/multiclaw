@@ -1,4 +1,4 @@
-# MultiClaw v2.1.1
+# MultiClaw v2.2.0
 
 ![Tests](https://github.com/primer-systems/multiclaw/actions/workflows/test.yml/badge.svg)
 
@@ -230,7 +230,30 @@ pytest tests/ -v
 - [Test Paywall Builder](https://www.primer.systems/test-paywall)
 - [Medium Article](https://medium.com/@primersystems/the-x402-agent-manifold-d51e72ee029d)
 
+## Quick Start with AI Agents
+
+The fastest way to get started is with the MultiClaw skills package:
+
+```bash
+npx skills add primer-systems/multiclaw-skills
+```
+
+This installs setup, payment, and service discovery skills into your AI agent (Claude Code, Cursor, Codex, etc.). Your agent can then guide you through installation and configuration.
+
+Alternatively, install directly:
+
+```bash
+pip install multiclaw[gui]   # Full desktop GUI
+pip install multiclaw         # CLI only
+```
+
 ## Changelog
+
+### v2.2.0
+- **Market tab** — browse and search x402 services from [agentic.market](https://agentic.market) directly in the GUI, with category filtering and copy-to-clipboard agent snippets
+- **Service discovery in SKILL.md** — agents can now discover x402 services via the Agentic.Market API, with budget-aware filtering against their MultiClaw spend policy
+- **MultiClaw Skills package** — `npx skills add primer-systems/multiclaw-skills` installs setup, payment, and discovery skills for any AI coding agent
+- Updated system interactions diagram in documentation
 
 ### v2.1.0
 - Published to PyPI — install with `pip install multiclaw` or `pip install multiclaw[gui]`

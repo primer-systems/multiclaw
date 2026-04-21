@@ -1,3 +1,3 @@
 """MultiClaw version - single source of truth."""
 
-__version__ = "2.1.1"
+__version__ = "2.2.0"
