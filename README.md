@@ -1,4 +1,4 @@
-# MultiClaw v2.2.0
+# MultiClaw v2.2.1
 
 ![Tests](https://github.com/primer-systems/multiclaw/actions/workflows/test.yml/badge.svg)
 
@@ -250,6 +250,9 @@ pip install multiclaw         # CLI only
 ```
 
 ## Changelog
+
+### v2.2.1
+- **Fix:** SKILL.md now correctly bundled in pip package — `/agent` endpoint works for pip installs (was only working for PyInstaller builds)
 
 ### v2.2.0
 - **Market tab** — browse and search x402 services from [agentic.market](https://agentic.market) directly in the GUI, with category filtering and copy-to-clipboard agent snippets

@@ -11,7 +11,7 @@ from PyInstaller.utils.hooks import collect_data_files
 spec_dir = Path(SPECPATH)
 src_dir = spec_dir / 'src'
 assets_dir = spec_dir / 'assets'
-skills_dir = spec_dir / 'skills'
+skills_dir = src_dir / 'multiclaw' / 'skills'
 
 # Platform-specific icon
 if platform.system() == 'Darwin':

@@ -280,10 +280,8 @@ def get_agent_instructions() -> str:
     if hasattr(sys, '_MEIPASS'):
         skill_paths.append(Path(sys._MEIPASS) / "skills" / "multiclaw-x402-payment" / "SKILL.md")
 
-    # Development: relative to this file
-    skill_paths.append(Path(__file__).parent.parent.parent / "skills" / "multiclaw-x402-payment" / "SKILL.md")
-    # Development: relative to cwd
-    skill_paths.append(Path(os.getcwd()) / "skills" / "multiclaw-x402-payment" / "SKILL.md")
+    # Pip install / development: skills directory is inside the multiclaw package
+    skill_paths.append(Path(__file__).parent.parent / "skills" / "multiclaw-x402-payment" / "SKILL.md")
 
     for skill_path in skill_paths:
         if skill_path.exists():
