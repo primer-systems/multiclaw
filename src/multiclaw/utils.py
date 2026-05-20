@@ -7,6 +7,8 @@ Contains path helpers and common utilities used across packages.
 import sys
 from pathlib import Path
 
+from platformdirs import user_data_dir
+
 
 # ============================================
 # Name Validation
@@ -59,11 +61,12 @@ def validate_name(name: str, field: str = "Name") -> str:
 def get_app_dir() -> Path:
     """Get the application data directory."""
     if getattr(sys, 'frozen', False):
-        # Running as compiled
+        # Running as compiled (PyInstaller) — keep data next to the executable
         app_dir = Path(sys.executable).parent / "data"
     else:
-        # Running as script (src/multiclaw/utils.py → repo root is 3 levels up)
-        app_dir = Path(__file__).parent.parent.parent / "data"
+        # Pip-installed or dev mode — use platform-standard location
+        # Windows: %APPDATA%/MultiClaw, Linux: ~/.local/share/MultiClaw, macOS: ~/Library/Application Support/MultiClaw
+        app_dir = Path(user_data_dir("MultiClaw", appauthor=False))
 
     app_dir.mkdir(parents=True, exist_ok=True)
     return app_dir

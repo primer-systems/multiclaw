@@ -912,7 +912,7 @@ Never share your private key with anyone!""")
 
         # Fail before asking for confirmation if key export isn't supported in this mode
         try:
-            from client.core_client import CoreClient
+            from multiclaw.client.core_client import CoreClient
             if isinstance(self.core, CoreClient):
                 return CommandResult.fail(
                     "Private key export requires running without a GUI or daemon.\n"

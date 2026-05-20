@@ -23,6 +23,7 @@ from pathlib import Path
 
 from .core import MultiClaw
 from .commands import CommandHandler, CommandResult
+from .utils import get_app_dir
 from .version import __version__
 
 
@@ -256,16 +257,13 @@ def main():
         print(f"MultiClaw {__version__}")
         sys.exit(0)
 
-    # Resolve data directory — must use exe location when frozen, not temp extraction dir
-    if getattr(sys, 'frozen', False):
-        data_dir = Path(sys.executable).parent / "data"
-    else:
-        data_dir = Path(__file__).parent.parent / "data"
+    # Resolve data directory
+    data_dir = get_app_dir()
 
     # Try to connect to a running instance that shares our data directory
     core = None
     try:
-        from client.core_client import CoreClient
+        from multiclaw.client.core_client import CoreClient
         core = CoreClient.try_connect(data_dir=data_dir)
     except Exception:
         pass
