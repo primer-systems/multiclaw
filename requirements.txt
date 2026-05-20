@@ -13,3 +13,6 @@ web3>=6.15.0
 
 # File watching
 watchdog>=3.0.0
+
+# Platform paths
+platformdirs>=4.0.0
