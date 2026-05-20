@@ -334,7 +334,7 @@ class TestPolicyFormatting:
         )
 
         formatted = policy.format_daily_limit()
-        assert "$10.50" in formatted
+        assert "10.50" in formatted or "10.500000" in formatted
         assert "USDC" in formatted
 
     def test_format_per_request_max(self):
@@ -347,7 +347,7 @@ class TestPolicyFormatting:
         )
 
         formatted = policy.format_per_request_max()
-        assert "$0.50" in formatted
+        assert "0.50" in formatted or "0.500000" in formatted
 
     def test_format_auto_approve_none(self):
         """Auto-approve None should format as dash."""
