@@ -1,4 +1,4 @@
-# MultiClaw v2.2.1
+# MultiClaw v2.2.2
 
 ![Tests](https://github.com/primer-systems/multiclaw/actions/workflows/test.yml/badge.svg)
 
@@ -250,6 +250,10 @@ pip install multiclaw         # CLI only
 ```
 
 ## Changelog
+
+### v2.2.2
+- **Fix:** Windows taskbar now shows MultiClaw icon instead of Python icon (pip install)
+- **Docs:** SKILL.md updated to v2-first format (CAIP-2 networks, `PAYMENT-SIGNATURE` header)
 
 ### v2.2.1
 - **Fix:** SKILL.md now correctly bundled in pip package — `/agent` endpoint works for pip installs (was only working for PyInstaller builds)

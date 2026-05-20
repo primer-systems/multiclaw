@@ -17,6 +17,11 @@ from pathlib import Path
 
 def run_gui():
     """Run the GUI application."""
+    # Windows: Set AppUserModelID so taskbar shows our icon, not Python's
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("systems.primer.multiclaw")
+
     from PyQt6.QtWidgets import QApplication
     from PyQt6.QtGui import QIcon
 

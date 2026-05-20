@@ -345,7 +345,7 @@ When you see this error (HTTP 409), include a unique `idempotency_key` to get a 
 {
   "status": "success",
   "x402_version": 2,
-  "header_name": "X-PAYMENT-RESPONSE",
+  "header_name": "PAYMENT-SIGNATURE",
   "header_value": "<base64 encoded payment>",
   "transaction_id": "<uuid for callback reporting>"
 }
@@ -597,14 +597,14 @@ Content-Type: application/json
   "agent_id": "${MULTICLAW_AGENT_ID}",
   "signature": "SIG:<timestamp>:<hex_signature>",
   "x402_data": {
-    "x402Version": 1,
+    "x402Version": 2,
     "accepts": [{
-      "network": "base",
+      "scheme": "exact",
+      "network": "eip155:8453",
       "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
       "payTo": "0x...",
       "maxAmountRequired": "1000000",
-      "resource": "https://api.example.com/resource",
-      "scheme": "exact"
+      "resource": "https://api.example.com/resource"
     }]
   }
 }
@@ -612,16 +612,16 @@ Content-Type: application/json
 
 ### Supported Networks
 
-MultiClaw supports these networks (use either v1 name or CAIP-2 format):
+MultiClaw supports these networks (use CAIP-2 format). Legacy v1 format is also accepted for backwards compatibility.
 
-| Network | v1 Name | CAIP-2 | USDC Contract |
-|---------|---------|--------|---------------|
-| Ethereum | `ethereum` | `eip155:1` | `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48` |
-| Ethereum Sepolia | `ethereum-sepolia` | `eip155:11155111` | `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` |
-| Base | `base` | `eip155:8453` | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
-| Base Sepolia | `base-sepolia` | `eip155:84532` | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
-| SKALE Base | `skale-base` | `eip155:1187947933` | `0x85889c8c714505E0c94b30fcfcF64fE3Ac8FCb20` |
-| SKALE Base Sepolia | `skale-base-sepolia` | `eip155:324705682` | `0x2e08028E3C4c2356572E096d8EF835cD5C6030bD` |
+| Network | Identifier | USDC Contract |
+|---------|------------|---------------|
+| Ethereum | `eip155:1` | `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48` |
+| Ethereum Sepolia | `eip155:11155111` | `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` |
+| Base | `eip155:8453` | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
+| Base Sepolia | `eip155:84532` | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
+| SKALE Base | `eip155:1187947933` | `0x85889c8c714505E0c94b30fcfcF64fE3Ac8FCb20` |
+| SKALE Base Sepolia | `eip155:324705682` | `0x2e08028E3C4c2356572E096d8EF835cD5C6030bD` |
 
 **Important:** When using `x402_data`, sign over `x402_data` (not `payment_required`):
 
