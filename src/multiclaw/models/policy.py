@@ -141,18 +141,18 @@ class SpendPolicy:
         return host == entry or host.endswith("." + entry)
 
     def format_daily_limit(self) -> str:
-        """Format daily limit as dollars with USDC indicator."""
-        return f"${self.daily_limit_micro / 1_000_000:.2f} USDC"
+        """Format daily limit as USDC with 6 decimal precision."""
+        return f"{self.daily_limit_micro / 1_000_000:.6f} USDC"
 
     def format_per_request_max(self) -> str:
-        """Format per-request max as dollars with USDC indicator."""
-        return f"${self.per_request_max_micro / 1_000_000:.2f} USDC"
+        """Format per-request max as USDC with 6 decimal precision."""
+        return f"{self.per_request_max_micro / 1_000_000:.6f} USDC"
 
     def format_auto_approve(self) -> str:
-        """Format auto-approve threshold as dollars with USDC indicator."""
+        """Format auto-approve threshold as USDC with 6 decimal precision."""
         if self.auto_approve_below_micro is None:
             return "—"
-        return f"${self.auto_approve_below_micro / 1_000_000:.2f} USDC"
+        return f"{self.auto_approve_below_micro / 1_000_000:.6f} USDC"
 
     def format_domain_restrictions(self) -> str:
         """Format domain restrictions for display."""

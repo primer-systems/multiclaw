@@ -86,7 +86,7 @@ Use 'policy <subcommand> --help' for subcommand options."""
             daily = policy.daily_limit_micro / 1_000_000
             per_req = policy.per_request_max_micro / 1_000_000
             auto = policy.auto_approve_below_micro / 1_000_000 if policy.auto_approve_below_micro else 0
-            lines.append(f"  {policy.name}  daily: ${daily:.2f}  max: ${per_req:.2f}  auto: ${auto:.2f}")
+            lines.append(f"  {policy.name}  daily: ${daily:.6f}  max: ${per_req:.6f}  auto: ${auto:.6f}")
 
         return CommandResult.ok("\n".join(lines), data={"policies": [
             {
@@ -120,9 +120,9 @@ allowed/blocked domains, and network restrictions.""")
 
         lines = [
             f"Policy: {policy.name}",
-            f"  Daily Limit:      ${daily:.2f}",
-            f"  Per Request Max:  ${per_req:.2f}",
-            f"  Auto-approve:     ${auto:.2f}",
+            f"  Daily Limit:      ${daily:.6f}",
+            f"  Per Request Max:  ${per_req:.6f}",
+            f"  Auto-approve:     ${auto:.6f}",
             f"  Allowed Domains:  {', '.join(policy.allowed_domains) if policy.allowed_domains else 'All'}",
             f"  Blocked Domains:  {', '.join(policy.blocked_domains) if policy.blocked_domains else 'None'}",
             f"  Networks:         {', '.join(str(n) for n in policy.networks) if policy.networks else 'All'}",
@@ -271,7 +271,7 @@ Examples:
                     if value < 0:
                         return CommandResult.fail(f"Daily limit cannot be negative: {args[i + 1]}")
                     policy.daily_limit_micro = int(value * 1_000_000)
-                    changes.append(f"daily limit: ${value:.2f}")
+                    changes.append(f"daily limit: ${value:.6f}")
                 except ValueError:
                     return CommandResult.fail(f"Invalid value for --day: {args[i + 1]}")
                 i += 2
@@ -281,7 +281,7 @@ Examples:
                     if value < 0:
                         return CommandResult.fail(f"Per-transaction max cannot be negative: {args[i + 1]}")
                     policy.per_request_max_micro = int(value * 1_000_000)
-                    changes.append(f"per-txn max: ${value:.2f}")
+                    changes.append(f"per-txn max: ${value:.6f}")
                 except ValueError:
                     return CommandResult.fail(f"Invalid value for --txn: {args[i + 1]}")
                 i += 2
@@ -291,7 +291,7 @@ Examples:
                     if value < 0:
                         return CommandResult.fail(f"Auto-approve threshold cannot be negative: {args[i + 1]}")
                     policy.auto_approve_below_micro = int(value * 1_000_000)
-                    changes.append(f"auto-approve: ${value:.2f}")
+                    changes.append(f"auto-approve: ${value:.6f}")
                 except ValueError:
                     return CommandResult.fail(f"Invalid value for --auto: {args[i + 1]}")
                 i += 2

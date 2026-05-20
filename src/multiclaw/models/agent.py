@@ -437,8 +437,8 @@ class Agent:
         return cls(**data)
 
     def format_spent_today(self) -> str:
-        """Format today's spending as dollars with USDC indicator."""
-        return f"${self.spent_today_micro / 1_000_000:.2f} USDC"
+        """Format today's spending as USDC with 6 decimal precision."""
+        return f"{self.spent_today_micro / 1_000_000:.6f} USDC"
 
     def decrypt_auth_key(self, password: str) -> str:
         """

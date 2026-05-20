@@ -1829,9 +1829,9 @@ class MandateViewerDialog(QDialog):
         daily = limits.get('dailyLimit') or 0
         per_req = limits.get('perRequestMax') or 0
         auto = limits.get('autoApproveBelow')  # Can be None for manual-only
-        auth_layout.addRow("Daily Limit:", QLabel(f"${daily/divisor:.2f} {currency}"))
-        auth_layout.addRow("Per Request Max:", QLabel(f"${per_req/divisor:.2f} {currency}"))
-        auto_text = f"${auto/divisor:.2f} {currency}" if auto is not None else "Manual only"
+        auth_layout.addRow("Daily Limit:", QLabel(f"{daily/divisor:.6f} {currency}"))
+        auth_layout.addRow("Per Request Max:", QLabel(f"{per_req/divisor:.6f} {currency}"))
+        auto_text = f"{auto/divisor:.6f} {currency}" if auto is not None else "Manual only"
         auth_layout.addRow("Auto-approve Below:", QLabel(auto_text))
 
         networks = auth.get('networks', [])
@@ -2301,7 +2301,7 @@ class WithdrawUSDCDialog(QDialog):
         addr_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         source_layout.addRow("Address:", addr_label)
 
-        balance_label = QLabel(f"${balance:.2f} USDC")
+        balance_label = QLabel(f"{balance:.6f} USDC")
         balance_label.setStyleSheet("font-weight: bold;")
         source_layout.addRow("Balance:", balance_label)
 
@@ -2429,7 +2429,7 @@ class WithdrawUSDCDialog(QDialog):
         confirm = QMessageBox.question(
             self,
             "Confirm Transfer",
-            f"Send ${amount:.2f} USDC to:\n\n"
+            f"Send {amount:.6f} USDC to:\n\n"
             f"{dest[:20]}...{dest[-8:]}\n\n"
             "This will use gas from the source wallet.\n"
             "Continue?",
@@ -2539,7 +2539,7 @@ class WithdrawUSDCDialog(QDialog):
                 self,
                 "Transaction Sent",
                 f"USDC transfer submitted!\n\n"
-                f"Amount: ${amount:.2f} USDC\n"
+                f"Amount: {amount:.6f} USDC\n"
                 f"To: {dest[:16]}...{dest[-8:]}\n\n"
                 f"Transaction: {tx_hash_hex[:16]}...\n\n"
                 f"View on explorer:\n{explorer_url}"
@@ -2656,7 +2656,7 @@ class SweepUSDCDialog(QDialog):
 
         btn_row.addStretch()
 
-        self.total_label = QLabel("Selected: $0.00 USDC")
+        self.total_label = QLabel("Selected: 0.000000 USDC")
         self.total_label.setStyleSheet(f"font-weight: bold; color: {Theme.LIME_DIM};")
         btn_row.addWidget(self.total_label)
 
@@ -2773,10 +2773,10 @@ class SweepUSDCDialog(QDialog):
 
                     # Donor list - show name + USDC balance or "--" if failed
                     if usdc_failed:
-                        item = QListWidgetItem(f"{short_addr}{name_display}    $-- USDC (RPC error)")
+                        item = QListWidgetItem(f"{short_addr}{name_display}    -- USDC (RPC error)")
                         item.setForeground(Qt.GlobalColor.red)
                     else:
-                        item = QListWidgetItem(f"{short_addr}{name_display}    ${usdc_bal:.6f} USDC")
+                        item = QListWidgetItem(f"{short_addr}{name_display}    {usdc_bal:.6f} USDC")
                         # Gray out if confirmed zero
                         if usdc_bal == 0:
                             item.setForeground(Qt.GlobalColor.gray)
@@ -2802,7 +2802,7 @@ class SweepUSDCDialog(QDialog):
                         'usdc_failed': True,
                     }
                     # Add to donor list with error indicator
-                    item = QListWidgetItem(f"{short_addr}{name_display}    $-- USDC (RPC error)")
+                    item = QListWidgetItem(f"{short_addr}{name_display}    -- USDC (RPC error)")
                     item.setData(Qt.ItemDataRole.UserRole, address)
                     item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                     item.setCheckState(Qt.CheckState.Unchecked)
@@ -2860,8 +2860,8 @@ class SweepUSDCDialog(QDialog):
                     total += self._balances[addr]['usdc']
                     count += 1
 
-        self.total_label.setText(f"Selected: {count} addresses, ${total:.6f} USDC")
-        self.sweep_btn.setText(f"Sweep ${total:.2f} USDC")
+        self.total_label.setText(f"Selected: {count} addresses, {total:.6f} USDC")
+        self.sweep_btn.setText(f"Sweep {total:.6f} USDC")
         self.sweep_btn.setEnabled(count > 0 and total > 0)
 
     def _get_selected_donors(self) -> list:
@@ -2914,7 +2914,7 @@ class SweepUSDCDialog(QDialog):
         confirm = QMessageBox.question(
             self,
             "Confirm Sweep",
-            f"Sweep ${total_usdc:.6f} USDC from {len(donors)} address(es)\n\n"
+            f"Sweep {total_usdc:.6f} USDC from {len(donors)} address(es)\n\n"
             f"To: {recipient_addr[:16]}...{recipient_addr[-8:]}\n"
             f"Gas paid by: {sponsor_addr[:16]}...{sponsor_addr[-8:]}\n\n"
             "This will execute multiple transactions. Continue?",

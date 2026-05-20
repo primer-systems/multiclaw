@@ -648,7 +648,7 @@ class MainWindow(QMainWindow):
     def on_approval_needed(self, request: SigningRequest):
         """Handle a signing request that needs manual approval."""
         self.update_activity(
-            f"Approval needed: {request.agent_name} ({request.agent_id}) requests ${request.amount_micro/1_000_000:.2f} USDC",
+            f"Approval needed: {request.agent_name} ({request.agent_id}) requests {request.amount_micro/1_000_000:.6f} USDC",
             is_warning=True
         )
 
@@ -657,7 +657,7 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'tray') and self.tray.isVisible():
                 self.tray.showMessage(
                     "Payment Approval Required",
-                    f"{request.agent_name} is requesting ${request.amount_micro/1_000_000:.2f} USDC",
+                    f"{request.agent_name} is requesting {request.amount_micro/1_000_000:.6f} USDC",
                     QSystemTrayIcon.MessageIcon.Information,
                     5000
                 )
@@ -686,7 +686,7 @@ class MainWindow(QMainWindow):
         self.activateWindow()
         self.raise_()
 
-        amount_str = f"${request.amount_micro/1_000_000:.2f} USDC"
+        amount_str = f"{request.amount_micro/1_000_000:.6f} USDC"
         # Prefer request_url (full URL) over resource (often path-only)
         if request.request_url:
             resource_str = f"\nURL: {request.request_url}"

@@ -1,4 +1,4 @@
-# MultiClaw v2.2.2
+# MultiClaw v2.3.0
 
 ![Tests](https://github.com/primer-systems/multiclaw/actions/workflows/test.yml/badge.svg)
 
@@ -250,6 +250,10 @@ pip install multiclaw         # CLI only
 ```
 
 ## Changelog
+
+### v2.3.0
+- **Fix:** Amount display now uses 6 decimals consistently (sub-cent payments no longer show as 0.00)
+- **Fix:** Removed redundant "$" prefix from amount displays (shows "0.002000 USDC" instead of "$0.00 USDC")
 
 ### v2.2.2
 - **Fix:** Windows taskbar now shows MultiClaw icon instead of Python icon (pip install)

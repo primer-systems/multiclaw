@@ -142,8 +142,8 @@ class Transaction:
         return cls(**data)
 
     def format_amount(self) -> str:
-        """Format amount as dollars with USDC indicator."""
-        return f"${self.amount_micro / 1_000_000:.2f} USDC"
+        """Format amount as USDC with 6 decimal precision."""
+        return f"{self.amount_micro / 1_000_000:.6f} USDC"
 
     def format_amount_precise(self) -> str:
         """Format amount with full 6-decimal precision for formal documents."""

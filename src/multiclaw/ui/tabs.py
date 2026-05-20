@@ -1964,14 +1964,14 @@ class WalletTab(QWidget):
             if addr_item and addr_item.data(Qt.ItemDataRole.UserRole) == address:
                 balance_item = self.table.item(row, 3)
                 if balance_item:
-                    balance_item.setText(f"${usdc_balance:.2f}")
+                    balance_item.setText(f"${usdc_balance:.6f}")
                     # Store full precision balance for withdrawal dialog
                     balance_item.setData(Qt.ItemDataRole.UserRole, usdc_balance)
                 break
 
         network_name = NETWORKS.get(selected_chain, {})
         network_display = network_name.display_name if hasattr(network_name, 'display_name') else str(selected_chain)
-        self.activity.emit(f"Balance: {format_address(address)} = ${usdc_balance:.2f} USDC ({network_display})", False)
+        self.activity.emit(f"Balance: {format_address(address)} = {usdc_balance:.6f} USDC ({network_display})", False)
 
     def _on_network_changed(self, index: int):
         """Handle network dropdown selection change."""

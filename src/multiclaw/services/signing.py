@@ -413,7 +413,7 @@ class SigningService:
             if self._policy_store:
                 self._policy_store.update_agent(agent)
             if old_spent > 0:
-                logger.info(f"Reset daily spending for agent {agent.id}: was ${old_spent/1_000_000:.2f}")
+                logger.info(f"Reset daily spending for agent {agent.id}: was {old_spent/1_000_000:.6f} USDC")
             return True
         return False
 
@@ -1263,7 +1263,7 @@ class SigningService:
             }
 
         if policy.per_request_max_micro and amount_micro > policy.per_request_max_micro:
-            reason = f"Exceeds per-request maximum (${amount_micro/1_000_000:.2f} > ${policy.per_request_max_micro/1_000_000:.2f} USDC)"
+            reason = f"Exceeds per-request maximum ({amount_micro/1_000_000:.6f} > {policy.per_request_max_micro/1_000_000:.6f} USDC)"
             self._emit_activity(f"Request from {agent.name}: {reason}", True)
             server_stats.rejected += 1
             # Create rejection receipt for audit trail
@@ -1283,7 +1283,7 @@ class SigningService:
         if policy.daily_limit_micro:
             remaining = policy.daily_limit_micro - agent.spent_today_micro
             if amount_micro > remaining:
-                reason = f"Would exceed daily limit (${amount_micro/1_000_000:.2f} > ${remaining/1_000_000:.2f} USDC remaining)"
+                reason = f"Would exceed daily limit ({amount_micro/1_000_000:.6f} > {remaining/1_000_000:.6f} USDC remaining)"
                 self._emit_activity(f"Request from {agent.name}: {reason}", True)
                 server_stats.rejected += 1
                 # Create rejection receipt for audit trail
@@ -1327,7 +1327,7 @@ class SigningService:
             self._pending_requests[request_id] = request
 
             self._emit_activity(
-                f"Payment request from {agent.name}: ${amount_micro/1_000_000:.2f} USDC - awaiting approval",
+                f"Payment request from {agent.name}: {amount_micro/1_000_000:.6f} USDC - awaiting approval",
                 False
             )
             self._emit_approval_needed(request)
@@ -1388,7 +1388,7 @@ class SigningService:
             del self._pending_requests[request_id]
             return {
                 "status": "error",
-                "error": f"Amount ${request.amount_micro/1_000_000:.2f} exceeds current per-request limit ${policy.per_request_max_micro/1_000_000:.2f}",
+                "error": f"Amount {request.amount_micro/1_000_000:.6f} USDC exceeds current per-request limit {policy.per_request_max_micro/1_000_000:.6f} USDC",
                 "code": "EXCEEDS_PER_REQUEST_MAX"
             }
 
@@ -1398,7 +1398,7 @@ class SigningService:
                 del self._pending_requests[request_id]
                 return {
                     "status": "error",
-                    "error": f"Amount ${request.amount_micro/1_000_000:.2f} exceeds remaining daily limit ${remaining/1_000_000:.2f}",
+                    "error": f"Amount {request.amount_micro/1_000_000:.6f} USDC exceeds remaining daily limit {remaining/1_000_000:.6f} USDC",
                     "code": "EXCEEDS_DAILY_LIMIT"
                 }
 
@@ -1661,7 +1661,7 @@ class SigningService:
             self._emit_transaction_updated(tx.id)
 
             self._emit_activity(
-                f"Signed ${amount_micro/1_000_000:.2f} USDC payment for {agent.name} ({agent.id}) from {wallet_id}",
+                f"Signed {amount_micro/1_000_000:.6f} USDC payment for {agent.name} ({agent.id}) from {wallet_id}",
                 False
             )
             self._emit_request_signed(agent.name, agent.id, wallet_id, amount_micro)
