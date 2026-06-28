@@ -273,6 +273,92 @@ class MultiClaw:
 
         return agent, agent_token
 
+    def get_agent_credentials(self, agent_code: str) -> tuple[str, str | None, str]:
+        """
+        Get agent credentials for display.
+
+        For HMAC mode: returns (agent_id, decrypted_secret, auth_mode) if wallet unlocked
+        For Bearer mode: returns (agent_id, None, auth_mode) - token is hashed, unrecoverable
+
+        Args:
+            agent_code: The agent's internal code (UUID)
+
+        Returns:
+            Tuple of (agent_id, token_or_none, auth_mode)
+
+        Raises:
+            ValueError if agent not found
+        """
+        agent = self._policy_store.get_agent_by_code(agent_code)
+        if not agent:
+            raise ValueError(f"Agent not found: {agent_code}")
+
+        if agent.auth_mode == "hmac":
+            # Try multiple passwords - agent may have been created with different wallet state
+            from ..wallet.crypto import NO_PASSWORD_SENTINEL
+            passwords_to_try = []
+            if self._wallet_password:
+                passwords_to_try.append(self._wallet_password)
+            if NO_PASSWORD_SENTINEL not in passwords_to_try:
+                passwords_to_try.append(NO_PASSWORD_SENTINEL)
+            if "temporary_password" not in passwords_to_try:
+                passwords_to_try.append("temporary_password")
+
+            for password in passwords_to_try:
+                try:
+                    secret_hex = agent.decrypt_auth_key(password)
+                    # Reconstruct the full token with AT_ prefix
+                    token = f"AT_{secret_hex}"
+                    return (agent.id, token, agent.auth_mode)
+                except Exception:
+                    continue
+
+            # All passwords failed
+            return (agent.id, None, agent.auth_mode)
+
+        return (agent.id, None, agent.auth_mode)
+
+    def regenerate_agent_token(self, agent_code: str) -> str:
+        """
+        Regenerate authentication token for a Bearer mode agent.
+
+        Creates a new token, hashes it, and updates the agent's stored auth_key.
+        The old token becomes invalid immediately.
+
+        Args:
+            agent_code: The agent's internal code (UUID)
+
+        Returns:
+            The new plain token (for display to user)
+
+        Raises:
+            ValueError if agent not found or not in Bearer mode
+        """
+        from ..models.agent import generate_agent_token, hash_bearer_token
+
+        agent = self._policy_store.get_agent_by_code(agent_code)
+        if not agent:
+            raise ValueError(f"Agent not found: {agent_code}")
+
+        if agent.auth_mode != "bearer":
+            raise ValueError("Token regeneration only supported for Bearer mode agents")
+
+        # Generate new token
+        new_token, _ = generate_agent_token()
+        token_hash = hash_bearer_token(new_token)
+
+        # Update agent
+        agent.auth_key = token_hash
+        self._policy_store.update_agent(agent)
+
+        self._event_bus.emit(Event(
+            type=EventType.AGENT_UPDATED,
+            data={"agent_id": agent.id, "action": "token_regenerated"}
+        ))
+        self._event_bus.emit_activity(f"Regenerated token for agent: {agent.name}")
+
+        return new_token
+
     def commission_agent(
         self,
         agent_code: str,

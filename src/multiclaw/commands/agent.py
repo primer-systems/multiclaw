@@ -104,6 +104,13 @@ class AgentCommands:
             if len(args) < 2:
                 return CommandResult.fail("Usage: agent delete <name|id>")
             return self._delete(args[1])
+        elif subcmd == "instructions":
+            if "--help" in args or "-h" in args:
+                return self._instructions_help()
+            if len(args) < 2:
+                return CommandResult.fail("Usage: agent instructions <name|ID> [--regenerate]")
+            regenerate = "--regenerate" in args
+            return self._instructions(args[1], regenerate=regenerate)
         else:
             return CommandResult.fail(f"Unknown subcommand: {subcmd}")
 
@@ -117,6 +124,7 @@ Subcommands:
   register <name> [--auth hmac|bearer] - Register new agent
   commission <agent> <policy> <address> - Commission agent
   edit <agent> [--policy P] [--address A] - Edit agent
+  instructions <agent> [--regenerate] - Show agent credentials
   mandate <agent> [--upload]        - Generate intent mandate
   suspend <agent>                   - Suspend agent
   activate <agent>                  - Activate agent
@@ -566,3 +574,130 @@ Example:
             "confirm",
             f"Delete agent '{agent.name}' ({agent.id})? This cannot be undone.\nType YES to confirm:",
         )
+
+    def _instructions_help(self) -> CommandResult:
+        """Help for agent instructions."""
+        return CommandResult.ok("""agent instructions - Show agent credentials and setup instructions
+
+Usage: agent instructions <name|ID> [--regenerate]
+
+Arguments:
+  <name|ID>     Agent name or ID
+
+Options:
+  --regenerate  For Bearer mode only: generate a new token (invalidates old one)
+
+Shows the configuration snippet to paste into your agent's system prompt,
+including the agent ID, token, auth mode, and server URL.
+
+For HMAC agents, the original signing secret is retrieved.
+For Bearer agents, the token cannot be retrieved after creation.
+Use --regenerate to create a new Bearer token if needed.
+
+Examples:
+  agent instructions myagent
+  agent instructions AG001 --regenerate""")
+
+    def _instructions(self, identifier: str, regenerate: bool = False) -> CommandResult:
+        """Show agent credentials and setup instructions."""
+        agent = self._find_agent(identifier)
+        if not agent:
+            return CommandResult.fail(f"Agent not found: {identifier}")
+
+        port = self.core.server_port
+
+        # Handle Bearer regeneration
+        if regenerate:
+            if agent.auth_mode != "bearer":
+                return CommandResult.fail(
+                    f"--regenerate only applies to Bearer mode agents.\n"
+                    f"Agent '{agent.name}' uses {agent.auth_mode.upper()} authentication."
+                )
+            try:
+                token = self.core.regenerate_agent_token(agent.code)
+                lines = [
+                    f"New Bearer token generated for agent '{agent.name}'.",
+                    "The old token is now invalid.",
+                    "",
+                    "Paste this into your agent's system prompt:",
+                    "",
+                    "I have set up a local service called MultiClaw that I want you to",
+                    "interact with. You can use this to handle x402 payments on my behalf.",
+                    "",
+                    f"Usage instructions are at http://localhost:{port}/agent",
+                    "Familiarise yourself with the instructions now, and use them any time",
+                    "you encounter a HTTP 402 (Payment Required) response.",
+                    "",
+                    "Your credentials:",
+                    f"MULTICLAW_AGENT_ID={agent.id}",
+                    f"MULTICLAW_AGENT_TOKEN={token}",
+                    f"MULTICLAW_AUTH_MODE={agent.auth_mode}",
+                    f"MULTICLAW_URL=http://localhost:{port}",
+                    "",
+                    "Save the token now - it cannot be retrieved later!",
+                ]
+                return CommandResult.ok("\n".join(lines), data={
+                    "agent_id": agent.id,
+                    "token": token,
+                    "auth_mode": agent.auth_mode,
+                    "regenerated": True,
+                })
+            except Exception as e:
+                return CommandResult.fail(f"Error regenerating token: {e}")
+
+        # Get existing credentials
+        try:
+            agent_id, token, auth_mode = self.core.get_agent_credentials(agent.code)
+        except Exception as e:
+            return CommandResult.fail(f"Error retrieving credentials: {e}")
+
+        if auth_mode == "bearer" and token is None:
+            # Bearer token cannot be retrieved
+            lines = [
+                f"Agent: {agent.name} ({agent.id})",
+                f"Auth Mode: {auth_mode}",
+                "",
+                "Bearer tokens cannot be retrieved after creation.",
+                "Use --regenerate to create a new token:",
+                "",
+                f"  agent instructions {identifier} --regenerate",
+                "",
+                "Note: This will invalidate the current token.",
+            ]
+            return CommandResult.ok("\n".join(lines), data={
+                "agent_id": agent.id,
+                "auth_mode": auth_mode,
+                "token_available": False,
+            })
+
+        if token is None:
+            # HMAC but couldn't decrypt (shouldn't happen now, but safety check)
+            return CommandResult.fail(
+                f"Could not retrieve credentials for agent '{agent.name}'.\n"
+                "The agent's secret may have been encrypted with a different wallet password."
+            )
+
+        # Success - show full instructions
+        lines = [
+            f"Agent: {agent.name}",
+            "",
+            "Paste this into your agent's system prompt:",
+            "",
+            "I have set up a local service called MultiClaw that I want you to",
+            "interact with. You can use this to handle x402 payments on my behalf.",
+            "",
+            f"Usage instructions are at http://localhost:{port}/agent",
+            "Familiarise yourself with the instructions now, and use them any time",
+            "you encounter a HTTP 402 (Payment Required) response.",
+            "",
+            "Your credentials:",
+            f"MULTICLAW_AGENT_ID={agent_id}",
+            f"MULTICLAW_AGENT_TOKEN={token}",
+            f"MULTICLAW_AUTH_MODE={auth_mode}",
+            f"MULTICLAW_URL=http://localhost:{port}",
+        ]
+        return CommandResult.ok("\n".join(lines), data={
+            "agent_id": agent_id,
+            "token": token,
+            "auth_mode": auth_mode,
+        })

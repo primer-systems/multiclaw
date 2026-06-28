@@ -829,6 +829,11 @@ class EditAgentDialog(QDialog):
         # Buttons
         btn_layout = QHBoxLayout()
 
+        # View Instructions button
+        self.instructions_btn = QPushButton("View Instructions")
+        self.instructions_btn.clicked.connect(self._show_instructions)
+        btn_layout.addWidget(self.instructions_btn)
+
         # Mandate button - shows "Create Mandate" or "View Mandate" based on state
         self.mandate_btn = QPushButton()
         self._update_mandate_button()
@@ -943,6 +948,11 @@ class EditAgentDialog(QDialog):
         self.agent.wallet_address = self.selected_wallet_address
         self.accept()
 
+    def _show_instructions(self):
+        """Show the agent instructions dialog."""
+        dialog = ViewInstructionsDialog(self.agent, self.core, parent=self)
+        dialog.exec()
+
     def get_changes(self) -> tuple[Optional[str], Optional[str]]:
         """Return the new policy_id and wallet_address."""
         return self.selected_policy_id, self.selected_wallet_address
@@ -1032,6 +1042,220 @@ class EditAgentDialog(QDialog):
     def was_mandate_created(self) -> bool:
         """Return True if a mandate was created during this dialog session."""
         return getattr(self, '_mandate_created', False)
+
+
+# ============================================
+# View Instructions Dialog
+# ============================================
+
+class ViewInstructionsDialog(QDialog):
+    """Dialog for viewing agent credentials and setup instructions."""
+
+    def __init__(self, agent: Agent, core, parent=None):
+        """
+        Args:
+            agent: Agent to show instructions for
+            core: MultiClaw core instance
+            parent: Parent widget
+        """
+        super().__init__(parent)
+        self.agent = agent
+        self.core = core
+
+        self.setWindowTitle(f"Agent Instructions: {agent.name}")
+        self.setMinimumWidth(550)
+        self.setMinimumHeight(350)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        # Title
+        title = QLabel("Agent Credentials")
+        title.setFont(QFont("", 11, QFont.Weight.Bold))
+        layout.addWidget(title)
+
+        # Description
+        desc = QLabel("Copy this configuration to your agent's environment:")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        layout.addSpacing(4)
+
+        # Config display
+        self.config_display = QTextEdit()
+        self.config_display.setReadOnly(True)
+        self.config_display.setFont(QFont(Theme.MONO_FONT, 10))
+        self.config_display.setMinimumHeight(140)
+        layout.addWidget(self.config_display)
+
+        # Copy button row
+        copy_row = QHBoxLayout()
+        copy_row.addStretch()
+
+        self.copy_btn = QPushButton("Copy to Clipboard")
+        self.copy_btn.setFixedWidth(140)
+        self.copy_btn.clicked.connect(self._copy_config)
+        copy_row.addWidget(self.copy_btn)
+
+        layout.addLayout(copy_row)
+
+        layout.addSpacing(8)
+
+        # Port note
+        port_note = QLabel(
+            "Note: If you change the server port, update MULTICLAW_URL in your agent configuration."
+        )
+        port_note.setWordWrap(True)
+        port_note.setStyleSheet(f"color: {Theme.CHARCOAL}; font-style: italic;")
+        layout.addWidget(port_note)
+
+        layout.addSpacing(8)
+
+        # Status/warning area (varies by auth mode and state)
+        self.status_label = QLabel()
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
+        # Regenerate button (only for Bearer mode)
+        self.regenerate_btn = QPushButton("Regenerate Token")
+        self.regenerate_btn.setVisible(False)
+        self.regenerate_btn.clicked.connect(self._regenerate_token)
+        layout.addWidget(self.regenerate_btn)
+
+        layout.addStretch()
+
+        # Close button
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(close_btn)
+
+        layout.addLayout(btn_layout)
+
+        # Load credentials and populate display
+        self._load_credentials()
+
+    def _load_credentials(self):
+        """Load credentials from core and populate the display."""
+        try:
+            agent_id, token, auth_mode = self.core.get_agent_credentials(self.agent.code)
+        except Exception as e:
+            self.config_display.setPlainText(f"Error loading credentials: {e}")
+            return
+
+        if auth_mode == "hmac":
+            if token:
+                # HMAC with decrypted secret
+                self._show_hmac_credentials(agent_id, token)
+            else:
+                # HMAC but wallet locked or decryption failed
+                self._show_hmac_locked(agent_id)
+        else:
+            # Bearer mode - token is unrecoverable
+            self._show_bearer_credentials(agent_id)
+
+    def _build_config_text(self, agent_id: str, token: str, auth_mode: str) -> str:
+        """Build the configuration snippet text."""
+        return f"""I have set up a local service called MultiClaw that I want you to interact with. You can use this to handle x402 payments on my behalf.
+
+Usage instructions are at http://localhost:9402/agent
+Familiarise yourself with the instructions now, and use them any time you encounter a HTTP 402 (Payment Required) response.
+
+Your credentials:
+MULTICLAW_AGENT_ID={agent_id}
+MULTICLAW_AGENT_TOKEN={token}
+MULTICLAW_AUTH_MODE={auth_mode}
+MULTICLAW_URL=http://localhost:9402"""
+
+    def _show_hmac_credentials(self, agent_id: str, token: str):
+        """Show full HMAC credentials with the decrypted secret."""
+        config_text = self._build_config_text(agent_id, token, "hmac")
+        self.config_display.setPlainText(config_text)
+
+        self.status_label.setText(
+            "This is your agent's HMAC signing secret. Keep it secure."
+        )
+        self.status_label.setStyleSheet(f"color: {Theme.CHARCOAL}; font-style: italic;")
+
+        self.regenerate_btn.setVisible(False)
+        self.copy_btn.setEnabled(True)
+        self._current_config = config_text
+
+    def _show_hmac_locked(self, agent_id: str):
+        """Show HMAC credentials with placeholder when wallet is locked."""
+        config_text = self._build_config_text(agent_id, "<unlock wallet to view>", "hmac")
+        self.config_display.setPlainText(config_text)
+
+        self.status_label.setText(
+            "Unlock the wallet to view the HMAC signing secret."
+        )
+        self.status_label.setStyleSheet("color: #B7410E;")
+
+        self.regenerate_btn.setVisible(False)
+        self.copy_btn.setEnabled(False)
+        self._current_config = None
+
+    def _show_bearer_credentials(self, agent_id: str):
+        """Show Bearer credentials with unrecoverable token notice."""
+        config_text = self._build_config_text(agent_id, "<token not recoverable>", "bearer")
+        self.config_display.setPlainText(config_text)
+
+        self.status_label.setText(
+            "Bearer tokens cannot be retrieved after creation. "
+            "You can regenerate a new token, which will invalidate the old one."
+        )
+        self.status_label.setStyleSheet("color: #B7410E;")
+
+        self.regenerate_btn.setVisible(True)
+        self.copy_btn.setEnabled(False)
+        self._current_config = None
+
+    def _copy_config(self):
+        """Copy configuration to clipboard with auto-clear for security."""
+        if hasattr(self, '_current_config') and self._current_config:
+            copy_sensitive_to_clipboard(self._current_config, self)
+
+    def _regenerate_token(self):
+        """Regenerate Bearer token after confirmation."""
+        reply = QMessageBox.warning(
+            self,
+            "Regenerate Token",
+            "This will create a new token and immediately invalidate the old one.\n\n"
+            "Any agents using the old token will stop working until updated.\n\n"
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            new_token = self.core.regenerate_agent_token(self.agent.code)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to regenerate token: {e}")
+            return
+
+        # Show the new token
+        config_text = self._build_config_text(self.agent.id, new_token, "bearer")
+        self.config_display.setPlainText(config_text)
+
+        self.status_label.setText(
+            "New token generated. Copy it now - it cannot be retrieved later."
+        )
+        self.status_label.setStyleSheet("color: #228B22; font-weight: bold;")
+
+        self.copy_btn.setEnabled(True)
+        self._current_config = config_text
+
+        QMessageBox.information(
+            self,
+            "Token Regenerated",
+            "A new Bearer token has been generated.\n\n"
+            "Copy the configuration now and update your agent."
+        )
 
 
 # ============================================
