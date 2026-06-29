@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.4.0 — 2026-06-28
+
+### Added
+- **View Instructions**: New feature to view agent credentials after initial creation. Access via "View Instructions" button in the Edit Agent dialog (GUI), `agent instructions <name>` command (CLI/Console), or double-click agent row context menu.
+- **Regenerate Bearer Token**: For Bearer auth agents, you can regenerate the token if the original was lost. Use `--regenerate` flag in CLI or the "Regenerate Token" button in GUI.
+- HMAC agent secrets can be retrieved at any time (decrypted from wallet).
+- Bearer tokens cannot be recovered after creation, but can be regenerated.
+
 ## 2.3.1 — 2026-05-20
 
 ### Fixed

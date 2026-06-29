@@ -37,6 +37,7 @@ from ..wallet.dialogs import (
 )
 # agent_server is now passed to NetworkTab constructor
 from ..networks import NETWORKS, DEFAULT_NETWORK, MultiNetworkBalanceFetcher, format_address, Balance
+from ..version import __version__
 # Note: Do NOT import get_wallet_dir or get_app_dir here. Use core methods instead.
 # See ARCHITECTURE.md "Common Mistakes" section.
 
@@ -2488,7 +2489,7 @@ class SettingsTab(QWidget):
         layout.addStretch()
 
         # Version info at bottom
-        version_label = QLabel("MultiClaw v1.0.0")
+        version_label = QLabel(f"MultiClaw v{__version__}")
         version_label.setStyleSheet(f"color: {Theme.CHARCOAL};")
         version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(version_label)
