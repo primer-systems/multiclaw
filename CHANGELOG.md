@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.1 — 2026-06-29
+
+### Fixed
+- Version display in Settings tab now shows correct version dynamically.
+
 ## 2.4.0 — 2026-06-28
 
 ### Added
