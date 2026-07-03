@@ -521,7 +521,7 @@ per_request_max = limits.get("policy", {}).get("per_request_max_micro")
 
 # When comparing x402 options, skip ones that exceed your limits
 for option in x402_options:
-    cost = option["maxAmountRequired"]
+    cost = int(option["amount"])  # atomic units (6-decimal USDC)
     if per_request_max and cost > per_request_max:
         continue  # Would be rejected anyway
     if cost > remaining:
@@ -598,21 +598,32 @@ Content-Type: application/json
   "signature": "SIG:<timestamp>:<hex_signature>",
   "x402_data": {
     "x402Version": 2,
+    "resource": {
+      "url": "https://api.example.com/resource",
+      "description": "",
+      "mimeType": ""
+    },
     "accepts": [{
       "scheme": "exact",
       "network": "eip155:8453",
+      "amount": "1000000",
       "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
       "payTo": "0x...",
-      "maxAmountRequired": "1000000",
-      "resource": "https://api.example.com/resource"
+      "maxTimeoutSeconds": 60,
+      "extra": { "name": "USD Coin", "version": "2" }
     }]
   }
 }
 ```
 
+Field notes (x402 v2): the per-option price is `amount` (atomic units, as a
+string), `network` is CAIP-2 (`eip155:<chainId>`), and `resource` is a
+top-level object (`{url, description, mimeType}`) alongside `accepts` — not a
+field inside each accept.
+
 ### Supported Networks
 
-MultiClaw supports these networks (use CAIP-2 format). Legacy v1 format is also accepted for backwards compatibility.
+MultiClaw supports these networks (use CAIP-2 format).
 
 | Network | Identifier | USDC Contract |
 |---------|------------|---------------|
@@ -671,7 +682,7 @@ Response:
   "payment": {
     "amount": {"micro": 1000000, "formatted": "1.000000 USDC"},
     "recipient": "0x...",
-    "network": "base"
+    "network": "eip155:8453"
   },
   "settlement": {
     "txHash": "0x...",

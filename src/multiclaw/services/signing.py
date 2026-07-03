@@ -62,52 +62,21 @@ NETWORK_CAIP_TO_V1["eip155:1"] = "ethereum"
 
 def validate_x402_request(x402_data: dict) -> tuple[bool, int, str]:
     """
-    Validate x402 request and detect version.
+    Validate an x402 request and detect its version (v1 or v2).
 
-    Returns (is_valid, detected_version, error_message)
+    Thin wrapper over the single intake parser (eip3009.parse_x402) so there is
+    exactly one place in the codebase that understands the wire dialects.
+    Version is decided from `x402Version` when present, otherwise inferred from
+    the amount field name - never from the network format.
 
-    We are STRICT here:
-    - v1: network must be plain name (base, base-sepolia, etc.)
-    - v2: network must be CAIP-2 format (eip155:8453)
-    - Mixed/invalid formats are rejected
+    Returns (is_valid, detected_version, error_message).
     """
-    if not isinstance(x402_data, dict):
-        return False, 0, "x402 data must be an object"
-
-    accepts = x402_data.get("accepts")
-    if not accepts or not isinstance(accepts, list) or len(accepts) == 0:
-        return False, 0, "Missing or empty 'accepts' array"
-
-    first_accept = accepts[0]
-    if not isinstance(first_accept, dict):
-        return False, 0, "Invalid accepts[0] format"
-
-    network = first_accept.get("network")
-    if not network:
-        return False, 0, "Missing 'network' in accepts"
-
-    max_amount = first_accept.get("maxAmountRequired")
-    if max_amount is None:
-        return False, 0, "Missing 'maxAmountRequired' in accepts"
-
-    pay_to = first_accept.get("payTo")
-    if not pay_to:
-        return False, 0, "Missing 'payTo' in accepts"
-
-    asset = first_accept.get("asset")
-    if not asset:
-        return False, 0, "Missing 'asset' in accepts"
-
-    # Detect version from network format
-    is_caip2 = network.startswith("eip155:")
-    is_v1_name = network.lower() in NETWORK_V1_TO_CAIP
-
-    if is_caip2:
-        return True, 2, ""
-    elif is_v1_name:
-        return True, 1, ""
-    else:
-        return False, 0, f"Invalid network format: '{network}'. Expected CAIP-2 (eip155:XXXX) for v2 or known network name for v1"
+    from .eip3009 import parse_x402
+    try:
+        requirements = parse_x402(x402_data)
+        return True, requirements.x402_version, ""
+    except ValueError as e:
+        return False, 0, str(e)
 
 
 def network_to_caip(network: str) -> str:
@@ -1132,22 +1101,13 @@ class SigningService:
             logger.info(f"Returning cached result for {agent_id} (tx: {tx_id[:8]}...)")
             return cached_result
 
-        # Handle the two input formats
+        # Handle the two input formats -> a single decoded dict
         if x402_data is not None:
             # AP2/A2A format: x402 data provided directly as JSON
-            is_valid, x402_version, validation_error = validate_x402_request(x402_data)
-            if not is_valid:
-                self._emit_activity(f"Invalid x402 from {agent.name}: {validation_error}", True)
-                server_stats.rejected += 1
-                return {
-                    "status": "error",
-                    "error": validation_error,
-                    "code": "INVALID_X402_FORMAT"
-                }
             decoded_x402_data = x402_data
         else:
             # HTTP 402 format: decode from Payment-Required header value
-            decoded_x402_data, detected_version, decode_error = decode_payment_required_header(payment_required)
+            decoded_x402_data, _, decode_error = decode_payment_required_header(payment_required)
             if decode_error:
                 self._emit_activity(f"Failed to decode payment_required from {agent.name}: {decode_error}", True)
                 server_stats.rejected += 1
@@ -1157,32 +1117,26 @@ class SigningService:
                     "code": "INVALID_PAYMENT_REQUIRED"
                 }
 
-            # Validate the decoded x402 data
-            is_valid, x402_version, validation_error = validate_x402_request(decoded_x402_data)
-            if not is_valid:
-                self._emit_activity(f"Invalid x402 from {agent.name}: {validation_error}", True)
-                server_stats.rejected += 1
-                return {
-                    "status": "error",
-                    "error": validation_error,
-                    "code": "INVALID_X402_FORMAT"
-                }
-
-            # Use the version detected from header (always v2 for Payment-Required)
-            x402_version = detected_version
-
+        # Single dialect-aware parse: the one place that reads v1/v2 wire fields.
+        # The amount/network/recipient/resource taken here are the SAME values
+        # that flow to the policy checks and to the signature - they cannot drift.
+        from .eip3009 import parse_x402
         try:
-            amount_micro = self._parse_amount_micro(decoded_x402_data)
-            network = decoded_x402_data.get("accepts", [{}])[0].get("network", "unknown")
-            recipient = decoded_x402_data.get("accepts", [{}])[0].get("payTo", "unknown")
-            resource = decoded_x402_data.get("accepts", [{}])[0].get("resource")
-        except Exception as e:
-            logger.error(f"Failed to parse x402 data: {e}")
+            requirements = parse_x402(decoded_x402_data)
+            amount_micro = self._bounded_amount_micro(requirements.max_amount_required)
+        except ValueError as e:
+            self._emit_activity(f"Invalid x402 from {agent.name}: {e}", True)
+            server_stats.rejected += 1
             return {
                 "status": "error",
-                "error": "Invalid x402 data format",
-                "code": "INVALID_REQUEST"
+                "error": str(e),
+                "code": "INVALID_X402_FORMAT"
             }
+
+        x402_version = requirements.x402_version
+        network = requirements.network  # CAIP-2
+        recipient = requirements.pay_to
+        resource = requirements.resource
 
         # Check if network is globally enabled (overrides policy-level settings)
         caip_network = network_to_caip(network)
@@ -1571,47 +1525,54 @@ class SigningService:
             wallet_id = addr_entry.id  # Use address ID (A001, etc.)
 
             # Use local EIP-3009 signing (no external SDK dependency)
-            from .eip3009 import parse_payment_requirements, create_payment
+            from .eip3009 import parse_x402, create_payment
 
-            accepts = x402_data.get("accepts", [{}])
-            original_network = accepts[0].get("network", "") if accepts else ""
-            recipient = accepts[0].get("payTo", "") if accepts else ""
-            resource = accepts[0].get("resource") if accepts else None
-            caip_network = network_to_caip(original_network)
+            # Single dialect-aware parse - deterministically the same result the
+            # intake produced, so the value signed here equals the amount that
+            # passed the policy checks. No independent re-reading of wire fields.
+            try:
+                requirements = parse_x402(x402_data)
+            except ValueError as e:
+                return {
+                    "status": "error",
+                    "error": str(e),
+                    "code": "INVALID_X402_FORMAT"
+                }
+
+            # Keep the merchant's raw network string for the audit record.
+            original_network = x402_data.get("accepts", [{}])[0].get("network", "")
+            recipient = requirements.pay_to
+            resource = requirements.resource
 
             # Validate Ethereum addresses before attempting to sign
             _eth_addr_re = re.compile(r'^0x[0-9a-fA-F]{40}$')
-            if accepts:
-                for field, addr in [("payTo", recipient),
-                                     ("asset", accepts[0].get("asset", ""))]:
-                    if addr and not _eth_addr_re.match(addr):
-                        hex_len = len(addr) - 2 if addr.startswith("0x") else len(addr)
-                        return {
-                            "status": "error",
-                            "error": (
-                                f"Invalid {field} address in payment_required: "
-                                f"'{addr}' is not a valid Ethereum address "
-                                f"(expected 40 hex characters, got {hex_len})"
-                            ),
-                            "code": "INVALID_PAYMENT_DATA"
-                        }
-
-            sdk_data = {
-                "x402Version": 2,
-                "accepts": [{
-                    **accepts[0],
-                    "network": caip_network
-                }] if accepts else []
-            }
-
-            requirements = parse_payment_requirements(sdk_data)
+            for field, addr in [("payTo", requirements.pay_to),
+                                 ("asset", requirements.asset)]:
+                if addr and not _eth_addr_re.match(addr):
+                    hex_len = len(addr) - 2 if addr.startswith("0x") else len(addr)
+                    return {
+                        "status": "error",
+                        "error": (
+                            f"Invalid {field} address in payment_required: "
+                            f"'{addr}' is not a valid Ethereum address "
+                            f"(expected 40 hex characters, got {hex_len})"
+                        ),
+                        "code": "INVALID_PAYMENT_DATA"
+                    }
 
             # Get private key from wallet using address ID
             private_key_bytes = wallet.get_private_key(addr_entry.id)
             private_key_hex = private_key_bytes.hex()
 
-            # Create payment using local EIP-3009 signing
-            payment = create_payment(private_key_hex, requirements)
+            # Create payment using local EIP-3009 signing. Echo the merchant's
+            # selected offer (`accepted`) and resource so the v2 payload is
+            # spec-shaped; the signature itself is unaffected by these fields.
+            selected_accept = x402_data.get("accepts", [{}])[0]
+            payment = create_payment(
+                private_key_hex, requirements,
+                accepted=selected_accept,
+                resource=x402_data.get("resource"),
+            )
 
             if x402_version == 1:
                 payment = self._convert_payment_to_v1(payment)
@@ -1695,14 +1656,18 @@ class SigningService:
             }
 
     def _convert_payment_to_v1(self, payment: dict) -> dict:
-        """Convert a v2 payment response to v1 format."""
-        v1_payment = payment.copy()
-        v1_payment["x402Version"] = 1
+        """Convert a v2 PaymentPayload to the flat v1 shape.
 
-        if "network" in v1_payment:
-            v1_payment["network"] = network_to_v1(v1_payment["network"])
-
-        return v1_payment
+        v1 puts `scheme`/`network` at the top level (v1 network name) and has no
+        `accepted`/`resource`. Only `payload` carries over unchanged.
+        """
+        accepted = payment.get("accepted", {})
+        return {
+            "x402Version": 1,
+            "scheme": accepted.get("scheme", "exact"),
+            "network": network_to_v1(accepted.get("network", "")),
+            "payload": payment["payload"],
+        }
 
     def handle_callback(
         self,
@@ -1807,35 +1772,35 @@ class SigningService:
 
         return tx.to_ap2_receipt(policy_name=policy_name)
 
-    def _parse_amount_micro(self, x402_data: dict) -> int:
+    def _bounded_amount_micro(self, raw_amount) -> int:
         """
-        Parse the payment amount from x402 data as micro-USDC (6 decimals).
+        Convert a parsed atomic amount to a bounds-checked int of micro-USDC.
 
-        Returns the raw amount directly from x402, which is already in
-        6-decimal format for USDC (1_000_000 = $1.00).
+        The amount is already in 6-decimal format for USDC (1_000_000 = $1.00),
+        the standard for stablecoins on EVM chains (USDC/USDT: 6 decimals). An
+        asset with different decimals (e.g. DAI with 18) would be miscounted.
 
-        This is the standard for stablecoins on EVM chains:
-        - USDC: 6 decimals
-        - USDT: 6 decimals (on most chains)
-
-        If you're using an asset with different decimals (e.g., DAI with 18),
-        the amount calculation will be incorrect.
+        Raises ValueError on a non-integer, non-positive, or absurdly large
+        amount.
         """
-        accepts = x402_data.get("accepts", [])
-        if not accepts:
-            raise ValueError("No accepts in x402 data")
-
-        # Parse and validate amount
-        raw_amount = accepts[0].get("maxAmountRequired", 0)
         try:
             amount_micro = int(raw_amount)
         except (ValueError, TypeError):
-            raise ValueError(f"Invalid maxAmountRequired: {raw_amount}")
+            raise ValueError(f"Invalid amount: {raw_amount!r}")
 
         # Bounds validation
         if amount_micro <= 0:
-            raise ValueError(f"maxAmountRequired must be positive, got {amount_micro}")
+            raise ValueError(f"amount must be positive, got {amount_micro}")
         if amount_micro > 10**15:  # $1 billion in micro-USDC - unreasonable upper bound
-            raise ValueError(f"maxAmountRequired exceeds maximum ({amount_micro} > 10^15)")
+            raise ValueError(f"amount exceeds maximum ({amount_micro} > 10^15)")
 
         return amount_micro
+
+    def _parse_amount_micro(self, x402_data: dict) -> int:
+        """Dialect-aware amount extraction + bounds check (v1 or v2).
+
+        Retained for callers/tests that hand in a raw x402 dict; delegates to
+        the single intake parser so it can never disagree with the signed value.
+        """
+        from .eip3009 import parse_x402
+        return self._bounded_amount_micro(parse_x402(x402_data).max_amount_required)

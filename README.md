@@ -251,34 +251,5 @@ pip install multiclaw         # CLI only
 
 ## Changelog
 
-### v2.3.0
-- **Fix:** Amount display now uses 6 decimals consistently (sub-cent payments no longer show as 0.00)
-- **Fix:** Removed redundant "$" prefix from amount displays (shows "0.002000 USDC" instead of "$0.00 USDC")
-
-### v2.2.2
-- **Fix:** Windows taskbar now shows MultiClaw icon instead of Python icon (pip install)
-- **Docs:** SKILL.md updated to v2-first format (CAIP-2 networks, `PAYMENT-SIGNATURE` header)
-
-### v2.2.1
-- **Fix:** SKILL.md now correctly bundled in pip package — `/agent` endpoint works for pip installs (was only working for PyInstaller builds)
-
-### v2.2.0
-- **Market tab** — browse and search x402 services from [agentic.market](https://agentic.market) directly in the GUI, with category filtering and copy-to-clipboard agent snippets
-- **Service discovery in SKILL.md** — agents can now discover x402 services via the Agentic.Market API, with budget-aware filtering against their MultiClaw spend policy
-- **MultiClaw Skills package** — `npx skills add primer-systems/multiclaw-skills` installs setup, payment, and discovery skills for any AI coding agent
-- Updated system interactions diagram in documentation
-
-### v2.1.0
-- Published to PyPI — install with `pip install multiclaw` or `pip install multiclaw[gui]`
-- Restructured as a proper Python package (`src/multiclaw/`)
-- Assets bundled with pip install (logo, icons)
-
-### v2.0.0
-- Added CLI mode with interactive REPL and scriptable single commands
-- Added headless daemon mode for server deployments
-- Added in-GUI console window (File → Console)
-- Single-instance architecture: CLI connects to running GUI via HTTP
-
-### v1.0.0
-- Initial release
+See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
