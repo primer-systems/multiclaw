@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.6.0 — 2026-07-21
+
+### Added
+- Light and dark themes for the desktop app, switchable under Settings → Preferences.
+
+### Changed
+- Refreshed the desktop UI — reworked dialogs, tabs, and console styling.
+
+### Docs
+- README and documentation: added an Agentic.Market service-discovery section, documented appearance settings, and refreshed screenshots.
+
 ## 2.5.0 — 2026-07-03
 
 ### Changed

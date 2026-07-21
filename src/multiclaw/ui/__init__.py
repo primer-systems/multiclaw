@@ -8,7 +8,7 @@ Contains:
 - Dialogs: Agent registration, policy editing, wallet management, settings
 """
 
-from .theme import Theme, ask_question, show_warning, show_info
+from .theme import Theme, LIGHT, DARK, build_qss, set_role, ask_question, show_warning, show_info, FramelessDialog
 from .main_window import MainWindow
 from .tabs import (
     PoliciesTab,
@@ -30,9 +30,14 @@ from .console import ConsoleWindow
 __all__ = [
     # Theme
     "Theme",
+    "LIGHT",
+    "DARK",
+    "build_qss",
+    "set_role",
     "ask_question",
     "show_warning",
     "show_info",
+    "FramelessDialog",
     # Main Window
     "MainWindow",
     # Tabs

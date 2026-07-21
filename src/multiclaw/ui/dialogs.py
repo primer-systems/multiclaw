@@ -10,7 +10,7 @@ Contains dialogs for:
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QTextEdit, QGroupBox, QFormLayout, QComboBox,
-    QMessageBox, QCheckBox, QListWidget, QListWidgetItem,
+    QCheckBox, QListWidget, QListWidgetItem,
     QDoubleSpinBox, QDialogButtonBox, QAbstractItemView,
     QApplication, QWidget, QRadioButton, QButtonGroup, QStackedWidget,
     QGridLayout
@@ -20,7 +20,7 @@ from PyQt6.QtGui import QFont
 from typing import Optional
 from datetime import datetime
 
-from .theme import Theme
+from .theme import Theme, set_role, FramelessDialog, FramelessMessageBox
 
 # Clipboard auto-clear timeout (seconds)
 # Security: Sensitive data (secrets, private keys, seed phrases) should not
@@ -55,7 +55,7 @@ def copy_sensitive_to_clipboard(text: str, parent: QWidget = None, timeout_sec: 
 
     # Show notification if parent available
     if parent:
-        QMessageBox.information(
+        FramelessMessageBox.information(
             parent,
             "Copied",
             f"Data copied to clipboard.\n\nClipboard will auto-clear in {timeout_sec} seconds."
@@ -72,7 +72,7 @@ WalletInfoLike = WalletInfo | AddressEntry
 # Agent Registration Dialog
 # ============================================
 
-class AgentRegistrationDialog(QDialog):
+class AgentRegistrationDialog(FramelessDialog):
     """Two-page wizard for registering a new agent with configurable authentication."""
 
     # Pages
@@ -87,9 +87,7 @@ class AgentRegistrationDialog(QDialog):
             core: MultiClaw core instance (required)
             parent: Parent widget
         """
-        super().__init__(parent)
-        self.setWindowTitle("Register New Agent")
-        self.setMinimumWidth(550)
+        super().__init__("Register New Agent", parent, width=550)
         self.setMinimumHeight(400)
 
         self._core = core
@@ -97,7 +95,7 @@ class AgentRegistrationDialog(QDialog):
         self.agent_token = None
         self.config_text = ""
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         # Stacked widget for pages
@@ -168,7 +166,7 @@ class AgentRegistrationDialog(QDialog):
             "transmitted—only proof of knowing it. More secure but requires signing code."
         )
         hmac_desc.setWordWrap(True)
-        hmac_desc.setStyleSheet(f"color: {Theme.CHARCOAL}; font-size: 11px; margin-left: 20px;")
+        hmac_desc.setProperty("role", "hint")
         auth_layout.addWidget(hmac_desc)
 
         auth_layout.addSpacing(12)
@@ -183,7 +181,7 @@ class AgentRegistrationDialog(QDialog):
             "struggle with signing, but the token is transmitted with every request."
         )
         bearer_desc.setWordWrap(True)
-        bearer_desc.setStyleSheet(f"color: {Theme.CHARCOAL}; font-size: 11px; margin-left: 20px;")
+        bearer_desc.setProperty("role", "hint")
         auth_layout.addWidget(bearer_desc)
 
         # Security warning for bearer
@@ -191,7 +189,7 @@ class AgentRegistrationDialog(QDialog):
             "⚠️ Less secure: Anyone who intercepts the token can impersonate this agent."
         )
         self.bearer_warning.setWordWrap(True)
-        self.bearer_warning.setStyleSheet("color: #B7410E; font-size: 11px; margin-left: 20px; padding-bottom: 2px;")
+        self.bearer_warning.setProperty("role", "warn")
         self.bearer_warning.setVisible(False)
         auth_layout.addWidget(self.bearer_warning)
 
@@ -233,7 +231,7 @@ class AgentRegistrationDialog(QDialog):
         copy_row.addStretch()
 
         copy_btn = QPushButton("Copy to Clipboard")
-        copy_btn.setFixedWidth(140)
+        copy_btn.setFixedWidth(160)
         copy_btn.clicked.connect(self._copy_config)
         copy_row.addWidget(copy_btn)
 
@@ -246,17 +244,17 @@ class AgentRegistrationDialog(QDialog):
             "Note: If you change the server port, update MULTICLAW_URL in your agent configuration."
         )
         port_note.setWordWrap(True)
-        port_note.setStyleSheet(f"color: {Theme.CHARCOAL}; font-style: italic;")
+        port_note.setProperty("role", "hint")
         layout.addWidget(port_note)
 
         layout.addSpacing(8)
 
-        # Warning
+        # Security note
         warning = QLabel(
-            "⚠️ Save this configuration now! The token cannot be retrieved later."
+            "⚠️ Anyone with these credentials can request signing of payments — up to your policy's limits."
         )
         warning.setWordWrap(True)
-        warning.setStyleSheet("color: #B7410E; font-weight: bold;")
+        warning.setProperty("role", "warn")
         layout.addWidget(warning)
 
         layout.addStretch()
@@ -282,13 +280,13 @@ class AgentRegistrationDialog(QDialog):
         """Generate authentication credentials via core and move to credentials page."""
         name = self.name_input.text().strip()
         if not name:
-            QMessageBox.warning(self, "Validation Error", "Agent name is required.")
+            FramelessMessageBox.warning(self, "Validation Error", "Agent name is required.")
             return
 
         # Check for duplicate name using core
         for agent in self._core.get_all_agents():
             if agent.name == name:
-                QMessageBox.warning(self, "Duplicate Name", f"Agent name '{name}' already exists.")
+                FramelessMessageBox.warning(self, "Duplicate Name", f"Agent name '{name}' already exists.")
                 return
 
         # Determine auth mode
@@ -298,7 +296,7 @@ class AgentRegistrationDialog(QDialog):
         try:
             self.agent, self.agent_token = self._core.create_agent(name, auth_mode)
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to create agent: {e}")
+            FramelessMessageBox.warning(self, "Error", f"Failed to create agent: {e}")
             return
 
         # Build config text
@@ -323,7 +321,7 @@ MULTICLAW_URL=http://localhost:9402"""
         """Copy configuration to clipboard."""
         if self.config_text:
             QApplication.clipboard().setText(self.config_text)
-            QMessageBox.information(self, "Copied", "Agent configuration copied to clipboard.")
+            FramelessMessageBox.information(self, "Copied", "Agent configuration copied to clipboard.")
 
     def _register_agent(self):
         """Complete registration - agent already created via core."""
@@ -340,7 +338,7 @@ MULTICLAW_URL=http://localhost:9402"""
 # Commission Dialog
 # ============================================
 
-class CommissionDialog(QDialog):
+class CommissionDialog(FramelessDialog):
     """Dialog for commissioning an agent with a spend policy and signing address."""
 
     def __init__(
@@ -359,7 +357,7 @@ class CommissionDialog(QDialog):
             get_wallet_fn: Function to get unlocked wallet by address
             parent: Parent widget
         """
-        super().__init__(parent)
+        super().__init__(f"Commission Agent: {agent.name}", parent, width=500)
         self.agent = agent
         self.core = core
         self.wallets = wallets or []
@@ -369,10 +367,7 @@ class CommissionDialog(QDialog):
         self.wallet_sort_by_id = True
         self.generated_mandate: Optional[dict] = None
 
-        self.setWindowTitle(f"Commission Agent: {agent.name}")
-        self.setMinimumWidth(500)
-
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
 
         desc = QLabel(
             "Select a spend policy and signing address to enable this agent. "
@@ -406,19 +401,19 @@ class CommissionDialog(QDialog):
         details_layout.setSpacing(2)
 
         self.detail_networks = QLabel("Networks: —")
-        self.detail_networks.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        self.detail_networks.setProperty("role", "muted")
         details_layout.addWidget(self.detail_networks)
 
         self.detail_limits = QLabel("Limits: —")
-        self.detail_limits.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        self.detail_limits.setProperty("role", "muted")
         details_layout.addWidget(self.detail_limits)
 
         self.detail_domains = QLabel("Domains: —")
-        self.detail_domains.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        self.detail_domains.setProperty("role", "muted")
         details_layout.addWidget(self.detail_domains)
 
         policy_hint = QLabel("See Policies tab for more information.")
-        policy_hint.setStyleSheet(f"color: {Theme.CHARCOAL}; font-size: 11px; font-style: italic;")
+        policy_hint.setProperty("role", "hint")
         details_layout.addWidget(policy_hint)
 
         layout.addWidget(self.policy_details)
@@ -432,7 +427,7 @@ class CommissionDialog(QDialog):
         wallet_header.addStretch()
 
         sort_label = QLabel("Sort:")
-        sort_label.setStyleSheet(f"color: {Theme.CHARCOAL}; font-size: 11px;")
+        sort_label.setProperty("role", "hint")
         wallet_header.addWidget(sort_label)
 
         self.sort_id_btn = QPushButton("ID")
@@ -493,7 +488,7 @@ class CommissionDialog(QDialog):
             "parties can use to verify this agent's spending authorization."
         )
         mandate_note.setWordWrap(True)
-        mandate_note.setStyleSheet(f"color: {Theme.CHARCOAL}; font-size: 11px;")
+        mandate_note.setProperty("role", "hint")
         ap2_layout.addWidget(mandate_note)
 
         layout.addWidget(ap2_group)
@@ -502,7 +497,7 @@ class CommissionDialog(QDialog):
             "⚠️ No spend policies exist. Create a policy in the Policies tab first."
         )
         self.no_policy_warning.setWordWrap(True)
-        self.no_policy_warning.setStyleSheet("color: #B7410E;")
+        self.no_policy_warning.setProperty("role", "warn")
         self.no_policy_warning.setVisible(not policies)
         layout.addWidget(self.no_policy_warning)
 
@@ -510,7 +505,7 @@ class CommissionDialog(QDialog):
             "⚠️ No addresses available. Add an address in the Wallet tab first."
         )
         self.no_wallet_warning.setWordWrap(True)
-        self.no_wallet_warning.setStyleSheet("color: #B7410E;")
+        self.no_wallet_warning.setProperty("role", "warn")
         self.no_wallet_warning.setVisible(not self.wallets)
         layout.addWidget(self.no_wallet_warning)
 
@@ -665,22 +660,15 @@ class CommissionDialog(QDialog):
             self.generated_mandate["registryId"] = result["mandate_id"]
             self.generated_mandate["registryUrl"] = result["viewer_url"]
 
-            # Show success message with clickable link
-            msg = QMessageBox(self)
-            msg.setWindowTitle("Mandate Published")
-            msg.setIcon(QMessageBox.Icon.Information)
-            msg.setText("Intent Mandate uploaded to AP2 Registry.")
-            msg.setInformativeText(
-                f"<a href='{result['viewer_url']}'>{result['viewer_url']}</a>"
+            # Show success message
+            FramelessMessageBox.information(
+                self,
+                "Mandate Published",
+                f"Intent Mandate uploaded to AP2 Registry.\n\n{result['viewer_url']}"
             )
-            msg.setTextFormat(Qt.TextFormat.RichText)
-            msg.setTextInteractionFlags(
-                Qt.TextInteractionFlag.TextBrowserInteraction
-            )
-            msg.exec()
             return True
         else:
-            QMessageBox.warning(
+            FramelessMessageBox.warning(
                 self,
                 "Registry Upload Failed",
                 f"Could not upload Intent Mandate to registry.\n\n"
@@ -694,7 +682,7 @@ class CommissionDialog(QDialog):
 # Edit Agent Dialog
 # ============================================
 
-class EditAgentDialog(QDialog):
+class EditAgentDialog(FramelessDialog):
     """Dialog for editing an agent's policy and signing address assignment."""
 
     def __init__(self, agent: Agent, core, wallets: list[WalletInfoLike] = None, parent=None):
@@ -705,7 +693,7 @@ class EditAgentDialog(QDialog):
             wallets: List of available wallet addresses
             parent: Parent widget
         """
-        super().__init__(parent)
+        super().__init__(f"Edit Agent: {agent.name}", parent, width=500)
         self.agent = agent
         self.core = core
         self.wallets = wallets or []
@@ -713,10 +701,7 @@ class EditAgentDialog(QDialog):
         self.selected_wallet_address: Optional[str] = agent.wallet_address
         self.wallet_sort_by_id = True
 
-        self.setWindowTitle(f"Edit Agent: {agent.name}")
-        self.setMinimumWidth(500)
-
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
 
         desc = QLabel(
             "Change the agent's spend policy or signing address. "
@@ -758,15 +743,15 @@ class EditAgentDialog(QDialog):
         details_layout.setSpacing(2)
 
         self.detail_networks = QLabel("Networks: —")
-        self.detail_networks.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        self.detail_networks.setProperty("role", "muted")
         details_layout.addWidget(self.detail_networks)
 
         self.detail_limits = QLabel("Limits: —")
-        self.detail_limits.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        self.detail_limits.setProperty("role", "muted")
         details_layout.addWidget(self.detail_limits)
 
         self.detail_domains = QLabel("Domains: —")
-        self.detail_domains.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        self.detail_domains.setProperty("role", "muted")
         details_layout.addWidget(self.detail_domains)
 
         layout.addWidget(self.policy_details)
@@ -784,7 +769,7 @@ class EditAgentDialog(QDialog):
         wallet_header.addStretch()
 
         sort_label = QLabel("Sort:")
-        sort_label.setStyleSheet(f"color: {Theme.CHARCOAL}; font-size: 11px;")
+        sort_label.setProperty("role", "hint")
         wallet_header.addWidget(sort_label)
 
         self.sort_id_btn = QPushButton("ID")
@@ -997,20 +982,17 @@ class EditAgentDialog(QDialog):
         """Create a new Intent Mandate for this agent."""
         policy = self.core.get_policy(self.agent.policy_id)
         if not policy:
-            QMessageBox.warning(self, "Error", "Cannot create mandate: policy not found")
+            FramelessMessageBox.warning(self, "Error", "Cannot create mandate: policy not found")
             return
 
         # Ask about publishing to registry
-        reply = QMessageBox.question(
+        if not FramelessMessageBox.question(
             self,
             "Create Intent Mandate",
             "Generate an Intent Mandate for this agent?\n\n"
             "This documents the authorization granted to this agent under the current policy.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes
-        )
-
-        if reply != QMessageBox.StandardButton.Yes:
+            default_no=False
+        ):
             return
 
         # Generate and set mandate through core
@@ -1026,7 +1008,7 @@ class EditAgentDialog(QDialog):
         self.agent.intent_mandate = mandate
         self._mandate_created = True
 
-        QMessageBox.information(
+        FramelessMessageBox.information(
             self,
             "Mandate Created",
             f"Intent Mandate generated successfully.\n\nID: {mandate.get('id', 'unknown')[:8]}..."
@@ -1048,7 +1030,7 @@ class EditAgentDialog(QDialog):
 # View Instructions Dialog
 # ============================================
 
-class ViewInstructionsDialog(QDialog):
+class ViewInstructionsDialog(FramelessDialog):
     """Dialog for viewing agent credentials and setup instructions."""
 
     def __init__(self, agent: Agent, core, parent=None):
@@ -1058,15 +1040,12 @@ class ViewInstructionsDialog(QDialog):
             core: MultiClaw core instance
             parent: Parent widget
         """
-        super().__init__(parent)
+        super().__init__(f"Agent Instructions: {agent.name}", parent, width=550)
+        self.setMinimumHeight(350)
         self.agent = agent
         self.core = core
 
-        self.setWindowTitle(f"Agent Instructions: {agent.name}")
-        self.setMinimumWidth(550)
-        self.setMinimumHeight(350)
-
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         # Title
@@ -1093,7 +1072,7 @@ class ViewInstructionsDialog(QDialog):
         copy_row.addStretch()
 
         self.copy_btn = QPushButton("Copy to Clipboard")
-        self.copy_btn.setFixedWidth(140)
+        self.copy_btn.setFixedWidth(160)
         self.copy_btn.clicked.connect(self._copy_config)
         copy_row.addWidget(self.copy_btn)
 
@@ -1106,7 +1085,7 @@ class ViewInstructionsDialog(QDialog):
             "Note: If you change the server port, update MULTICLAW_URL in your agent configuration."
         )
         port_note.setWordWrap(True)
-        port_note.setStyleSheet(f"color: {Theme.CHARCOAL}; font-style: italic;")
+        port_note.setProperty("role", "hint")
         layout.addWidget(port_note)
 
         layout.addSpacing(8)
@@ -1177,7 +1156,7 @@ MULTICLAW_URL=http://localhost:9402"""
         self.status_label.setText(
             "This is your agent's HMAC signing secret. Keep it secure."
         )
-        self.status_label.setStyleSheet(f"color: {Theme.CHARCOAL}; font-style: italic;")
+        self.status_label.setProperty("role", "hint")
 
         self.regenerate_btn.setVisible(False)
         self.copy_btn.setEnabled(True)
@@ -1191,7 +1170,7 @@ MULTICLAW_URL=http://localhost:9402"""
         self.status_label.setText(
             "Unlock the wallet to view the HMAC signing secret."
         )
-        self.status_label.setStyleSheet("color: #B7410E;")
+        self.status_label.setProperty("role", "warn")
 
         self.regenerate_btn.setVisible(False)
         self.copy_btn.setEnabled(False)
@@ -1206,7 +1185,7 @@ MULTICLAW_URL=http://localhost:9402"""
             "Bearer tokens cannot be retrieved after creation. "
             "You can regenerate a new token, which will invalidate the old one."
         )
-        self.status_label.setStyleSheet("color: #B7410E;")
+        self.status_label.setProperty("role", "warn")
 
         self.regenerate_btn.setVisible(True)
         self.copy_btn.setEnabled(False)
@@ -1219,23 +1198,19 @@ MULTICLAW_URL=http://localhost:9402"""
 
     def _regenerate_token(self):
         """Regenerate Bearer token after confirmation."""
-        reply = QMessageBox.warning(
+        if not FramelessMessageBox.question(
             self,
             "Regenerate Token",
             "This will create a new token and immediately invalidate the old one.\n\n"
             "Any agents using the old token will stop working until updated.\n\n"
-            "Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-
-        if reply != QMessageBox.StandardButton.Yes:
+            "Continue?"
+        ):
             return
 
         try:
             new_token = self.core.regenerate_agent_token(self.agent.code)
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to regenerate token: {e}")
+            FramelessMessageBox.critical(self, "Error", f"Failed to regenerate token: {e}")
             return
 
         # Show the new token
@@ -1245,12 +1220,12 @@ MULTICLAW_URL=http://localhost:9402"""
         self.status_label.setText(
             "New token generated. Copy it now - it cannot be retrieved later."
         )
-        self.status_label.setStyleSheet("color: #228B22; font-weight: bold;")
+        self.status_label.setProperty("role", "success")
 
         self.copy_btn.setEnabled(True)
         self._current_config = config_text
 
-        QMessageBox.information(
+        FramelessMessageBox.information(
             self,
             "Token Regenerated",
             "A new Bearer token has been generated.\n\n"
@@ -1262,7 +1237,7 @@ MULTICLAW_URL=http://localhost:9402"""
 # New Policy Dialog
 # ============================================
 
-class NewPolicyDialog(QDialog):
+class NewPolicyDialog(FramelessDialog):
     """Dialog for creating or editing a spend policy."""
 
     def __init__(self, parent=None, policy: SpendPolicy = None, core=None):
@@ -1272,19 +1247,14 @@ class NewPolicyDialog(QDialog):
             policy: Existing policy to edit (None for new policy)
             core: MultiClaw core instance (required for validation)
         """
-        super().__init__(parent)
+        title = "Edit Spend Policy" if policy else "New Spend Policy"
+        super().__init__(title, parent, width=500)
         self.existing_policy = policy
         self._core = core
-
-        if policy:
-            self.setWindowTitle("Edit Spend Policy")
-        else:
-            self.setWindowTitle("New Spend Policy")
-
-        self.setMinimumWidth(500)
         self.setMinimumHeight(600)
 
-        layout = QFormLayout(self)
+        layout = QFormLayout()
+        self.content_layout.addLayout(layout)
 
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("e.g., Low Spend, High Limit")
@@ -1355,7 +1325,7 @@ class NewPolicyDialog(QDialog):
             "Auto-approve signs payments below the threshold without confirmation. Spend limits still apply."
         )
         auto_approve_help.setWordWrap(True)
-        auto_approve_help.setStyleSheet(f"color: {Theme.CHARCOAL}; font-size: 11px;")
+        auto_approve_help.setProperty("role", "hint")
         layout.addRow(auto_approve_help)
 
         # Domain restrictions section
@@ -1375,7 +1345,7 @@ class NewPolicyDialog(QDialog):
         domains_layout.addWidget(self.allowed_domains_input)
 
         allowed_help = QLabel("Leave empty to allow all domains.")
-        allowed_help.setStyleSheet(f"color: {Theme.CHARCOAL}; font-size: 11px;")
+        allowed_help.setProperty("role", "hint")
         domains_layout.addWidget(allowed_help)
 
         # Blocked domains
@@ -1391,13 +1361,13 @@ class NewPolicyDialog(QDialog):
         domains_layout.addWidget(self.blocked_domains_input)
 
         blocked_help = QLabel("Blocked entries override the allowlist.")
-        blocked_help.setStyleSheet(f"color: {Theme.CHARCOAL}; font-size: 11px;")
+        blocked_help.setProperty("role", "hint")
         domains_layout.addWidget(blocked_help)
 
         # General domain help
         domain_note = QLabel("Subdomains are included automatically (e.g., stripe.com includes api.stripe.com).")
         domain_note.setWordWrap(True)
-        domain_note.setStyleSheet(f"color: {Theme.CHARCOAL}; font-size: 11px; font-style: italic;")
+        domain_note.setProperty("role", "hint")
         domains_layout.addWidget(domain_note)
 
         layout.addRow(domains_group)
@@ -1413,21 +1383,21 @@ class NewPolicyDialog(QDialog):
         """Validate inputs before accepting."""
         name = self.name_input.text().strip()
         if not name:
-            QMessageBox.warning(self, "Validation Error", "Policy name is required.")
+            FramelessMessageBox.warning(self, "Validation Error", "Policy name is required.")
             return
 
         # Check for duplicate name using core
         if self._core:
             for policy in self._core.get_all_policies():
                 if policy.name == name and (not self.existing_policy or policy.id != self.existing_policy.id):
-                    QMessageBox.warning(self, "Duplicate Name", f"Policy name '{name}' already exists.")
+                    FramelessMessageBox.warning(self, "Duplicate Name", f"Policy name '{name}' already exists.")
                     return
 
         selected_networks = [
             chain_id for chain_id, cb in self.network_checkboxes.items() if cb.isChecked()
         ]
         if not selected_networks:
-            QMessageBox.warning(self, "Validation Error", "Select at least one network.")
+            FramelessMessageBox.warning(self, "Validation Error", "Select at least one network.")
             return
 
         self.accept()
@@ -1495,18 +1465,16 @@ class NewPolicyDialog(QDialog):
 # Settings Dialog
 # ============================================
 
-class SettingsDialog(QDialog):
+class SettingsDialog(FramelessDialog):
     """Dialog for application settings (notifications, startup, window behavior)."""
 
     def __init__(self, settings: dict, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Preferences")
-        self.setMinimumWidth(450)
+        super().__init__("Preferences", parent, width=450)
 
         self._settings = settings.copy()
         self._changed = False
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
 
         # Notifications group
         notif_group = QGroupBox("Notifications")
@@ -1514,7 +1482,7 @@ class SettingsDialog(QDialog):
 
         notif_desc = QLabel("Control how MultiClaw notifies you about events.")
         notif_desc.setWordWrap(True)
-        notif_desc.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        notif_desc.setProperty("role", "muted")
         notif_layout.addRow(notif_desc)
 
         self.sound_checkbox = QCheckBox("Play sound for approval requests")
@@ -1534,9 +1502,30 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(notif_group)
 
-        # Window behavior group
-        window_group = QGroupBox("Window Behavior")
+        # Window and Appearance group
+        window_group = QGroupBox("Window and Appearance")
         window_layout = QFormLayout(window_group)
+
+        # Theme toggle (Light / Dark)
+        from PyQt6.QtWidgets import QButtonGroup
+        theme_row = QWidget()
+        theme_layout = QHBoxLayout(theme_row)
+        theme_layout.setContentsMargins(0, 0, 0, 0)
+        theme_layout.setSpacing(0)
+        self.theme_group = QButtonGroup(self)
+        self.theme_group.setExclusive(True)
+        self.theme_light_btn = QPushButton("Light")
+        self.theme_dark_btn = QPushButton("Dark")
+        for i, btn in enumerate((self.theme_light_btn, self.theme_dark_btn)):
+            btn.setCheckable(True)
+            btn.setProperty("segment", "true")
+            self.theme_group.addButton(btn, i)
+            theme_layout.addWidget(btn)
+        theme_layout.addStretch()
+        is_dark = self._settings.get("theme", "light") == "dark"
+        (self.theme_dark_btn if is_dark else self.theme_light_btn).setChecked(True)
+        self.theme_group.idClicked.connect(self._on_setting_changed)
+        window_layout.addRow("Theme:", theme_row)
 
         self.minimize_to_tray_checkbox = QCheckBox("Minimize to system tray instead of taskbar")
         self.minimize_to_tray_checkbox.setChecked(self._settings.get("minimize_to_tray", False))
@@ -1560,7 +1549,7 @@ class SettingsDialog(QDialog):
         startup_layout = QFormLayout(startup_group)
 
         self.auto_start_server_checkbox = QCheckBox("Start server automatically on launch")
-        self.auto_start_server_checkbox.setChecked(self._settings.get("auto_start_server", False))
+        self.auto_start_server_checkbox.setChecked(self._settings.get("auto_start_server", True))
         self.auto_start_server_checkbox.stateChanged.connect(self._on_setting_changed)
         startup_layout.addRow(self.auto_start_server_checkbox)
 
@@ -1572,7 +1561,7 @@ class SettingsDialog(QDialog):
 
         logging_desc = QLabel("Control log persistence between sessions.")
         logging_desc.setWordWrap(True)
-        logging_desc.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        logging_desc.setProperty("role", "muted")
         logging_layout.addRow(logging_desc)
 
         from PyQt6.QtWidgets import QSpinBox
@@ -1603,7 +1592,7 @@ class SettingsDialog(QDialog):
 
         security_desc = QLabel("Automatically lock wallet after period of inactivity.")
         security_desc.setWordWrap(True)
-        security_desc.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        security_desc.setProperty("role", "muted")
         security_layout.addRow(security_desc)
 
         self.auto_lock_input = QSpinBox()
@@ -1618,7 +1607,7 @@ class SettingsDialog(QDialog):
         # Replay window for signed requests
         replay_desc = QLabel("Maximum age for signed agent requests (prevents replay attacks).")
         replay_desc.setWordWrap(True)
-        replay_desc.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        replay_desc.setProperty("role", "muted")
         security_layout.addRow(replay_desc)
 
         self.replay_window_input = QSpinBox()
@@ -1652,6 +1641,7 @@ class SettingsDialog(QDialog):
             "sound_enabled": self.sound_checkbox.isChecked(),
             "toast_enabled": self.toast_checkbox.isChecked(),
             "flash_taskbar": self.flash_checkbox.isChecked(),
+            "theme": "dark" if self.theme_dark_btn.isChecked() else "light",
             "minimize_to_tray": self.minimize_to_tray_checkbox.isChecked(),
             "close_to_tray": self.close_to_tray_checkbox.isChecked(),
             "start_minimized": self.start_minimized_checkbox.isChecked(),
@@ -1671,7 +1661,7 @@ class SettingsDialog(QDialog):
 # Transaction Detail Dialog
 # ============================================
 
-class TransactionDetailDialog(QDialog):
+class TransactionDetailDialog(FramelessDialog):
     """Dialog showing full details of a transaction."""
 
     STATUS_COLORS = {
@@ -1690,14 +1680,12 @@ class TransactionDetailDialog(QDialog):
             core: MultiClaw core instance for verification/receipts
             parent: Parent widget
         """
-        super().__init__(parent)
+        super().__init__(f"Transaction Details - {tx.id[:8]}", parent, width=550)
         self.tx = tx
         self.core = core
-        self.setWindowTitle(f"Transaction Details - {tx.id[:8]}")
-        self.setMinimumWidth(550)
         self.setMinimumHeight(450)
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         # Header with status
@@ -1776,7 +1764,7 @@ class TransactionDetailDialog(QDialog):
 
         if tx.reject_reason:
             reason_label = QLabel(tx.reject_reason)
-            reason_label.setStyleSheet(f"color: {Theme.ERROR};")
+            reason_label.setProperty("role", "error")
             timeline_layout.addRow("Reason:", reason_label)
 
         layout.addWidget(timeline_group)
@@ -1919,15 +1907,13 @@ class TransactionDetailDialog(QDialog):
         receipt = self.core.get_receipt(self.tx.id)
 
         if receipt.get("error"):
-            QMessageBox.warning(self, "Error", f"Could not get receipt: {receipt.get('error')}")
+            FramelessMessageBox.warning(self, "Error", f"Could not get receipt: {receipt.get('error')}")
             return
 
-        dialog = QDialog(self)
-        dialog.setWindowTitle(f"AP2 Receipt - {self.tx.id[:8]}")
-        dialog.setMinimumWidth(500)
+        dialog = FramelessDialog(f"AP2 Receipt - {self.tx.id[:8]}", self, width=500)
         dialog.setMinimumHeight(400)
 
-        layout = QVBoxLayout(dialog)
+        layout = dialog.content_layout
 
         # Status header
         status = receipt.get("status", "unknown")
@@ -1965,21 +1951,18 @@ class TransactionDetailDialog(QDialog):
 # Mandate Viewer Dialog
 # ============================================
 
-class MandateViewerDialog(QDialog):
+class MandateViewerDialog(FramelessDialog):
     """Dialog for viewing and managing an agent's Intent Mandate."""
 
     def __init__(self, agent: Agent, current_policy: Optional[SpendPolicy] = None, parent=None):
-        super().__init__(parent)
+        super().__init__(f"Intent Mandate - {agent.name}", parent, width=550)
         self.agent = agent
         self.mandate = agent.intent_mandate
         self.current_policy = current_policy
         self.revoked = False
-
-        self.setWindowTitle(f"Intent Mandate - {agent.name}")
-        self.setMinimumWidth(550)
         self.setMinimumHeight(500)
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         # Check for staleness
@@ -1987,13 +1970,13 @@ class MandateViewerDialog(QDialog):
         if stale and self.mandate:
             stale_banner = QLabel(f"⚠️ Mandate is stale: {stale_reason}\nConsider re-commissioning to regenerate.")
             stale_banner.setWordWrap(True)
-            stale_banner.setStyleSheet(f"background: {Theme.WARNING}; color: #000; padding: 8px; border-radius: 4px;")
+            stale_banner.setObjectName("warningBox")  # Styled via QSS
             layout.addWidget(stale_banner)
 
         if not self.mandate:
             # No mandate
             no_mandate = QLabel("No Intent Mandate has been generated for this agent.")
-            no_mandate.setStyleSheet(f"color: {Theme.CHARCOAL}; padding: 40px;")
+            no_mandate.setProperty("role", "empty")
             no_mandate.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(no_mandate)
 
@@ -2011,7 +1994,7 @@ class MandateViewerDialog(QDialog):
         mandate_id = self.mandate.get('id', 'unknown')[:8]
         id_label = QLabel(f"Mandate: {mandate_id}...")
         id_label.setFont(QFont(Theme.MONO_FONT, 10))
-        id_label.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        id_label.setProperty("role", "muted")
         header.addStretch()
         header.addWidget(id_label)
 
@@ -2116,7 +2099,7 @@ class MandateViewerDialog(QDialog):
             except (ValueError, TypeError):
                 issued_str = issued_at
             issued_label = QLabel(f"Issued: {issued_str}")
-            issued_label.setStyleSheet(f"color: {Theme.CHARCOAL};")
+            issued_label.setProperty("role", "muted")
             layout.addWidget(issued_label)
 
         # Registry URL if available
@@ -2146,7 +2129,7 @@ class MandateViewerDialog(QDialog):
 
         revoke_btn = QPushButton("Revoke Mandate")
         revoke_btn.setToolTip("Remove the mandate from this agent (cannot be undone)")
-        revoke_btn.setStyleSheet(f"background: {Theme.RUST}; color: {Theme.WHITE};")
+        revoke_btn.setProperty("variant", "danger")
         revoke_btn.clicked.connect(self._revoke_mandate)
         button_row.addWidget(revoke_btn)
 
@@ -2160,12 +2143,10 @@ class MandateViewerDialog(QDialog):
         """Show full mandate JSON in a dialog."""
         import json
 
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Intent Mandate JSON")
-        dialog.setMinimumWidth(500)
+        dialog = FramelessDialog("Intent Mandate JSON", self, width=500)
         dialog.setMinimumHeight(400)
 
-        layout = QVBoxLayout(dialog)
+        layout = dialog.content_layout
 
         text_edit = QTextEdit()
         text_edit.setReadOnly(True)
@@ -2189,16 +2170,13 @@ class MandateViewerDialog(QDialog):
 
     def _revoke_mandate(self):
         """Revoke the mandate from the agent."""
-        reply = QMessageBox.question(
+        if FramelessMessageBox.question(
             self,
             "Revoke Mandate",
             f"Revoke the Intent Mandate for agent '{self.agent.name}'?\n\n"
             "This will remove the mandate from this agent. "
-            "The agent can be recommissioned to generate a new mandate.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        if reply == QMessageBox.StandardButton.Yes:
+            "The agent can be recommissioned to generate a new mandate."
+        ):
             self.agent.intent_mandate = None
             self.revoked = True
             self.accept()
@@ -2247,7 +2225,7 @@ class MandateViewerDialog(QDialog):
 # Export Keys Dialog
 # ============================================
 
-class ExportKeysDialog(QDialog):
+class ExportKeysDialog(FramelessDialog):
     """Dialog for exporting private keys and seed phrases."""
 
     def __init__(self, wallets: list[WalletInfoLike], get_wallet_fn, parent=None):
@@ -2259,32 +2237,21 @@ class ExportKeysDialog(QDialog):
             get_wallet_fn: Function to get an unlocked wallet by address
             parent: Parent widget
         """
-        super().__init__(parent)
+        super().__init__("Export Keys", parent, width=500)
         self.wallets = wallets
         self.get_wallet_fn = get_wallet_fn
-
-        self.setWindowTitle("Export Keys")
-        self.setMinimumWidth(500)
         self.setMinimumHeight(400)
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         # Warning header
         warning_box = QGroupBox()
-        warning_box.setStyleSheet(f"""
-            QGroupBox {{
-                background-color: #FFF3CD;
-                border: 1px solid #FFECB5;
-                border-radius: 4px;
-                padding: 8px;
-            }}
-        """)
+        warning_box.setObjectName("warningBox")  # Styled via QSS
         warning_layout = QVBoxLayout(warning_box)
 
         warning_title = QLabel("Security Warning")
         warning_title.setFont(QFont("", 11, QFont.Weight.Bold))
-        warning_title.setStyleSheet("color: #856404;")
         warning_layout.addWidget(warning_title)
 
         warning_text = QLabel(
@@ -2292,7 +2259,6 @@ class ExportKeysDialog(QDialog):
             "Never share them with anyone. Store backups securely offline."
         )
         warning_text.setWordWrap(True)
-        warning_text.setStyleSheet("color: #856404;")
         warning_layout.addWidget(warning_text)
 
         layout.addWidget(warning_box)
@@ -2389,29 +2355,25 @@ class ExportKeysDialog(QDialog):
         """Reveal the selected keys."""
         wallet_info = self.address_combo.currentData()
         if not wallet_info:
-            QMessageBox.warning(self, "Error", "No address selected.")
+            FramelessMessageBox.warning(self, "Error", "No address selected.")
             return
 
         wallet = self.get_wallet_fn(wallet_info.address)
         if not wallet:
-            QMessageBox.warning(
+            FramelessMessageBox.warning(
                 self, "Error",
                 "Could not retrieve wallet. Make sure the wallet is unlocked."
             )
             return
 
         # Confirm before revealing
-        confirm = QMessageBox.warning(
+        if not FramelessMessageBox.question(
             self,
             "Confirm Export",
             "You are about to reveal sensitive key material.\n\n"
             "Make sure no one is watching your screen.\n\n"
-            "Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-
-        if confirm != QMessageBox.StandardButton.Yes:
+            "Continue?"
+        ):
             return
 
         output_lines = []
@@ -2469,7 +2431,7 @@ class ExportKeysDialog(QDialog):
         """Copy the output to clipboard with auto-clear."""
         text = self.output_text.toPlainText()
         if not text or text == self.output_text.placeholderText():
-            QMessageBox.information(
+            FramelessMessageBox.information(
                 self, "Nothing to Copy",
                 "Click 'Reveal Keys' first to show the data."
             )
@@ -2482,7 +2444,7 @@ class ExportKeysDialog(QDialog):
 # Withdraw USDC Dialog
 # ============================================
 
-class WithdrawUSDCDialog(QDialog):
+class WithdrawUSDCDialog(FramelessDialog):
     """Dialog for withdrawing USDC from a wallet (requires gas)."""
 
     def __init__(
@@ -2503,17 +2465,14 @@ class WithdrawUSDCDialog(QDialog):
             chain_id: Chain ID for the transaction
             parent: Parent widget
         """
-        super().__init__(parent)
+        super().__init__(f"Withdraw USDC - {wallet_entry.id}", parent, width=450)
         self.wallet_entry = wallet_entry
         self.balance = balance
         self.get_private_key_fn = get_private_key_fn
         self.chain_id = chain_id
-
-        self.setWindowTitle(f"Withdraw USDC - {wallet_entry.id}")
-        self.setFixedWidth(450)
         self.setFixedHeight(420)
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         # Source info
@@ -2526,7 +2485,7 @@ class WithdrawUSDCDialog(QDialog):
         source_layout.addRow("Address:", addr_label)
 
         balance_label = QLabel(f"{balance:.6f} USDC")
-        balance_label.setStyleSheet("font-weight: bold;")
+        balance_label.setProperty("role", "strong")
         source_layout.addRow("Balance:", balance_label)
 
         network = NETWORKS.get(chain_id)
@@ -2537,21 +2496,13 @@ class WithdrawUSDCDialog(QDialog):
 
         # Warning about gas
         warning_box = QGroupBox()
-        warning_box.setStyleSheet("""
-            QGroupBox {
-                background-color: #FFF3E0;
-                border: 1px solid #FFB74D;
-                border-radius: 4px;
-                padding: 8px;
-            }
-        """)
+        warning_box.setObjectName("warningBox")  # Styled via QSS
         warning_layout = QVBoxLayout(warning_box)
         warning_text = QLabel(
             "This transaction requires gas. Ensure the source wallet has "
             f"sufficient {network.native_symbol if network else 'native token'} for gas fees."
         )
         warning_text.setWordWrap(True)
-        warning_text.setStyleSheet("color: #E65100;")
         warning_layout.addWidget(warning_text)
         layout.addWidget(warning_box)
 
@@ -2588,7 +2539,7 @@ class WithdrawUSDCDialog(QDialog):
         export_link = QLabel('<a href="#">Export private key to use with external wallet</a>')
         export_link.setOpenExternalLinks(False)
         export_link.linkActivated.connect(self._export_key)
-        export_link.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        export_link.setProperty("role", "muted")
         layout.addWidget(export_link)
 
         # Status area (hidden by default)
@@ -2614,16 +2565,13 @@ class WithdrawUSDCDialog(QDialog):
 
     def _export_key(self):
         """Export the private key for this wallet."""
-        confirm = QMessageBox.warning(
+        if not FramelessMessageBox.question(
             self,
             "Export Private Key",
             "Are you sure you want to export the private key?\n\n"
             "Anyone with this key can access all funds in this wallet.\n"
-            "Never share it with anyone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        if confirm != QMessageBox.StandardButton.Yes:
+            "Never share it with anyone."
+        ):
             return
 
         try:
@@ -2634,33 +2582,30 @@ class WithdrawUSDCDialog(QDialog):
                     pkey = "0x" + pkey.hex()
                 copy_sensitive_to_clipboard(pkey, self)
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to export key: {e}")
+            FramelessMessageBox.critical(self, "Error", f"Failed to export key: {e}")
 
     def _execute_withdraw(self):
         """Execute the USDC transfer."""
         # Validate destination
         dest = self.dest_input.text().strip()
         if not dest or not dest.startswith("0x") or len(dest) != 42:
-            QMessageBox.warning(self, "Invalid Address", "Please enter a valid destination address.")
+            FramelessMessageBox.warning(self, "Invalid Address", "Please enter a valid destination address.")
             return
 
         amount = self.amount_input.value()
         if amount <= 0 or amount > self.balance:
-            QMessageBox.warning(self, "Invalid Amount", "Please enter a valid amount.")
+            FramelessMessageBox.warning(self, "Invalid Amount", "Please enter a valid amount.")
             return
 
         # Confirm
-        confirm = QMessageBox.question(
+        if not FramelessMessageBox.question(
             self,
             "Confirm Transfer",
             f"Send {amount:.6f} USDC to:\n\n"
             f"{dest[:20]}...{dest[-8:]}\n\n"
             "This will use gas from the source wallet.\n"
-            "Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        if confirm != QMessageBox.StandardButton.Yes:
+            "Continue?"
+        ):
             return
 
         self.send_btn.setEnabled(False)
@@ -2755,11 +2700,11 @@ class WithdrawUSDCDialog(QDialog):
             tx_hash_hex = tx_hash.hex()
 
             self.status_label.setText(f"Transaction sent: {tx_hash_hex[:16]}...")
-            self.status_label.setStyleSheet("color: green;")
+            set_role(self.status_label, role="success")
 
             # Show success with explorer link
             explorer_url = f"{network.explorer_url}/tx/0x{tx_hash_hex}"
-            QMessageBox.information(
+            FramelessMessageBox.information(
                 self,
                 "Transaction Sent",
                 f"USDC transfer submitted!\n\n"
@@ -2773,8 +2718,8 @@ class WithdrawUSDCDialog(QDialog):
 
         except Exception as e:
             self.status_label.setText(f"Error: {e}")
-            self.status_label.setStyleSheet("color: red;")
-            QMessageBox.critical(self, "Transfer Failed", str(e))
+            set_role(self.status_label, role="error")
+            FramelessMessageBox.critical(self, "Transfer Failed", str(e))
 
         finally:
             self.send_btn.setEnabled(True)
@@ -2785,7 +2730,7 @@ class WithdrawUSDCDialog(QDialog):
 # Sweep USDC Dialog
 # ============================================
 
-class SweepUSDCDialog(QDialog):
+class SweepUSDCDialog(FramelessDialog):
     """
     Dialog for sweeping USDC from multiple donor addresses to a single recipient.
     Uses EIP-3009 transferWithAuthorization so sponsor pays all gas.
@@ -2798,20 +2743,17 @@ class SweepUSDCDialog(QDialog):
         get_private_key_fn,  # Function(address_id) -> bytes
         chain_id: int,
     ):
-        super().__init__(parent)
+        super().__init__("Sweep USDC", parent, width=550)
         self.addresses = addresses
         self.get_private_key_fn = get_private_key_fn
         self.chain_id = chain_id
-
-        self.setWindowTitle("Sweep USDC")
-        self.setMinimumWidth(550)
         self.setMinimumHeight(500)
 
         self._setup_ui()
         self._refresh_balances()
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
 
         # Network selector
         network_layout = QHBoxLayout()
@@ -2835,7 +2777,7 @@ class SweepUSDCDialog(QDialog):
         self.sponsor_combo.setFont(QFont(Theme.MONO_FONT, 9))
         sponsor_layout.addRow("Address:", self.sponsor_combo)
         self.sponsor_balance_label = QLabel("")
-        self.sponsor_balance_label.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        self.sponsor_balance_label.setProperty("role", "muted")
         sponsor_layout.addRow("", self.sponsor_balance_label)
         layout.addWidget(sponsor_group)
 
@@ -2881,7 +2823,7 @@ class SweepUSDCDialog(QDialog):
         btn_row.addStretch()
 
         self.total_label = QLabel("Selected: 0.000000 USDC")
-        self.total_label.setStyleSheet(f"font-weight: bold; color: {Theme.LIME_DIM};")
+        self.total_label.setProperty("role", "total")
         btn_row.addWidget(self.total_label)
 
         donor_layout.addLayout(btn_row)
@@ -3050,7 +2992,7 @@ class SweepUSDCDialog(QDialog):
                     'usdc_raw': 0,
                     'entry': addr_entry
                 }
-            QMessageBox.warning(self, "Error", f"Failed to fetch balances: {e}")
+            FramelessMessageBox.warning(self, "Error", f"Failed to fetch balances: {e}")
 
     def _select_all_donors(self):
         """Select all donors with non-zero balance."""
@@ -3116,7 +3058,7 @@ class SweepUSDCDialog(QDialog):
         # Get inputs
         sponsor_addr = self.sponsor_combo.currentData()
         if not sponsor_addr:
-            QMessageBox.warning(self, "Error", "Please select a sponsor address.")
+            FramelessMessageBox.warning(self, "Error", "Please select a sponsor address.")
             return
 
         if self.use_internal_radio.isChecked():
@@ -3125,27 +3067,24 @@ class SweepUSDCDialog(QDialog):
             recipient_addr = self.external_input.text().strip()
 
         if not recipient_addr or not recipient_addr.startswith("0x") or len(recipient_addr) != 42:
-            QMessageBox.warning(self, "Error", "Please enter a valid recipient address.")
+            FramelessMessageBox.warning(self, "Error", "Please enter a valid recipient address.")
             return
 
         donors = self._get_selected_donors()
         if not donors:
-            QMessageBox.warning(self, "Error", "Please select at least one donor address.")
+            FramelessMessageBox.warning(self, "Error", "Please select at least one donor address.")
             return
 
         # Confirm
         total_usdc = sum(d['usdc'] for d in donors)
-        confirm = QMessageBox.question(
+        if not FramelessMessageBox.question(
             self,
             "Confirm Sweep",
             f"Sweep {total_usdc:.6f} USDC from {len(donors)} address(es)\n\n"
             f"To: {recipient_addr[:16]}...{recipient_addr[-8:]}\n"
             f"Gas paid by: {sponsor_addr[:16]}...{sponsor_addr[-8:]}\n\n"
-            "This will execute multiple transactions. Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        if confirm != QMessageBox.StandardButton.Yes:
+            "This will execute multiple transactions. Continue?"
+        ):
             return
 
         # Disable UI
@@ -3276,12 +3215,12 @@ class SweepUSDCDialog(QDialog):
                     successful += 1
 
                     self.status_label.setText(f"Sent: ${donor['usdc']:.6f} from {donor['address'][:10]}...")
-                    self.status_label.setStyleSheet(f"color: {Theme.LIME};")
+                    set_role(self.status_label, status="on")
 
                 except Exception as e:
                     failed += 1
                     self.status_label.setText(f"Failed: {donor['address'][:10]}... - {e}")
-                    self.status_label.setStyleSheet(f"color: {Theme.ERROR};")
+                    set_role(self.status_label, role="error")
 
                 QApplication.processEvents()
 
@@ -3289,7 +3228,7 @@ class SweepUSDCDialog(QDialog):
             self.progress_label.setText(f"Complete: {successful} successful, {failed} failed")
 
             if successful > 0:
-                QMessageBox.information(
+                FramelessMessageBox.information(
                     self,
                     "Sweep Complete",
                     f"Successfully swept {successful} address(es).\n"
@@ -3299,12 +3238,12 @@ class SweepUSDCDialog(QDialog):
                 )
                 self.accept()
             else:
-                QMessageBox.warning(self, "Sweep Failed", "All transfers failed.")
+                FramelessMessageBox.warning(self, "Sweep Failed", "All transfers failed.")
 
         except Exception as e:
             self.status_label.setText(f"Error: {e}")
-            self.status_label.setStyleSheet(f"color: {Theme.ERROR};")
-            QMessageBox.critical(self, "Sweep Failed", str(e))
+            set_role(self.status_label, role="error")
+            FramelessMessageBox.critical(self, "Sweep Failed", str(e))
 
         finally:
             self.sweep_btn.setEnabled(True)

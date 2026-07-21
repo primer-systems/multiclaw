@@ -21,8 +21,12 @@ DEFAULT_SETTINGS = {
         "verify_settlements": False,
         "max_request_age_seconds": 300,
         "enabled_networks": {
-            "8453": False,    # Base Mainnet - disabled by default
-            "84532": True,    # Base Sepolia - enabled by default
+            "1": True,           # Ethereum Mainnet
+            "11155111": True,    # Ethereum Sepolia
+            "8453": True,        # Base Mainnet
+            "84532": True,       # Base Sepolia
+            "1187947933": True,  # SKALE Base
+            "324705682": True,   # SKALE Base Sepolia
         }
     },
     "server": {
@@ -44,7 +48,9 @@ class SigningSettings:
     """Signing-related settings."""
     verify_settlements: bool = False
     max_request_age_seconds: int = 300
-    enabled_networks: dict = field(default_factory=lambda: {"8453": False, "84532": True})
+    enabled_networks: dict = field(default_factory=lambda: {
+        "1": True, "11155111": True, "8453": True, "84532": True, "1187947933": True, "324705682": True
+    })
 
 
 @dataclass
@@ -104,7 +110,9 @@ class AppSettings:
             s = data["signing"]
             settings.signing.verify_settlements = s.get("verify_settlements", False)
             settings.signing.max_request_age_seconds = s.get("max_request_age_seconds", 300)
-            settings.signing.enabled_networks = s.get("enabled_networks", {"8453": False, "84532": True})
+            settings.signing.enabled_networks = s.get("enabled_networks", {
+                "1": True, "11155111": True, "8453": True, "84532": True, "1187947933": True, "324705682": True
+            })
 
         if "server" in data:
             s = data["server"]

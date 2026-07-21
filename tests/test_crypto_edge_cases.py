@@ -189,8 +189,10 @@ class TestCorruptedDataHandling:
 
         if "tag" in data:
             original_tag = data["tag"]
-            # Flip a bit in the tag
-            modified_tag = "00" + original_tag[2:]
+            # Flip bits in the first byte to guarantee modification
+            first_byte = int(original_tag[:2], 16)
+            modified_byte = first_byte ^ 0xFF  # Invert all bits
+            modified_tag = f"{modified_byte:02x}" + original_tag[2:]
             data["tag"] = modified_tag
 
             with open(wallet_path, 'w') as f:

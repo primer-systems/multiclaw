@@ -5,15 +5,16 @@ Provides command-line access to all MultiClaw functions within the GUI.
 """
 
 import html as _html
+import re
 from typing import Callable, TYPE_CHECKING
 
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QTextEdit, QLineEdit, QHBoxLayout, QLabel
+    QWidget, QVBoxLayout, QTextEdit, QLineEdit, QHBoxLayout, QLabel
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QTextCursor, QKeyEvent
 
-from .theme import Theme
+from .theme import Theme, FramelessDialog
 from ..commands import CommandHandler, CommandResult
 
 if TYPE_CHECKING:
@@ -33,6 +34,15 @@ CONSOLE_BANNER = (
     f'<span style="color: #888888;"> for available commands</span><br>'
     f'<span style="color: {Theme.CHARCOAL};">═══════════════════════════════════════</span><br><br>'
 )
+
+
+# Console output syntax highlighting.
+# Section headers are ALL-CAPS lines (CONSOLE, AGENTS, POLICIES, ...).
+# <placeholders> and [optional] args reuse the Theme help-text colors.
+_HEADER_RE = re.compile(r"^[A-Z][A-Z0-9 /&]*$")
+_PLACEHOLDER_RE = re.compile(r"&lt;.+?&gt;")   # <arg>  (after HTML-escaping)
+_OPTIONAL_RE = re.compile(r"\[.+?\]")           # [optional]
+_MUTED = "#888888"                              # description text after " - "
 
 
 class PromptLabel(QLabel):
@@ -150,11 +160,11 @@ class CommandInput(QLineEdit):
             self.setText(self._history[-(new_index + 1)])
 
 
-class ConsoleWindow(QMainWindow):
+class ConsoleWindow(FramelessDialog):
     """Terminal-style console window for MultiClaw."""
 
     def __init__(self, core: "MultiClaw", parent=None):
-        super().__init__(parent)
+        super().__init__("MultiClaw Console", parent, width=800)
         self.core = core
         self._handler = CommandHandler(self.core)
 
@@ -162,14 +172,11 @@ class ConsoleWindow(QMainWindow):
         self._waiting_for_input = False
         self._input_field = None  # "password", "confirm", "text"
 
-        self.setWindowTitle("MultiClaw Console")
         self.setMinimumSize(700, 500)
         self.resize(800, 600)
 
-        # Central widget
-        central = QWidget()
-        self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
+        # Use content_layout from FramelessDialog, but with no margins for terminal look
+        layout = self.content_layout
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
@@ -246,6 +253,38 @@ class ConsoleWindow(QMainWindow):
         self.output.setTextCursor(cursor)
         self.output.ensureCursorVisible()
 
+    def _append_output(self, line: str, base_color: str):
+        """Append one output line with help-text syntax highlighting.
+
+        - ALL-CAPS section headers -> RUST (bold)
+        - <placeholders> -> PLACEHOLDER (cyan)
+        - [optional] args -> OPTIONAL (purple)
+        - description after " - " -> muted grey
+        - everything else -> base_color
+        """
+        stripped = line.strip()
+        if stripped and _HEADER_RE.match(stripped):
+            self._append(f"<b>{_html.escape(line)}</b>", Theme.RUST)
+            return
+
+        # Split "command  - description" so the description renders dim grey.
+        idx = line.find(" - ")
+        cmd, desc = (line[:idx], line[idx:]) if idx != -1 else (line, "")
+
+        cmd_html = _html.escape(cmd)
+        cmd_html = _PLACEHOLDER_RE.sub(
+            lambda m: f'<span style="color: {Theme.PLACEHOLDER};">{m.group(0)}</span>',
+            cmd_html,
+        )
+        cmd_html = _OPTIONAL_RE.sub(
+            lambda m: f'<span style="color: {Theme.OPTIONAL};">{m.group(0)}</span>',
+            cmd_html,
+        )
+
+        if desc:
+            cmd_html += f'<span style="color: {_MUTED};">{_html.escape(desc)}</span>'
+        self._append(cmd_html, base_color)
+
     def _append_lines(self, lines: list[tuple[str, str]]):
         """Append multiple lines. Each tuple is (text, color)."""
         for text, color in lines:
@@ -320,7 +359,7 @@ class ConsoleWindow(QMainWindow):
         color = Theme.LIME if result.success else "#E94435"
         if result.output:
             for line in result.output.split("\n"):
-                self._append(_html.escape(line), color)
+                self._append_output(line, color)
         if result.error:
             self._append(_html.escape(result.error), "#E94435")
 

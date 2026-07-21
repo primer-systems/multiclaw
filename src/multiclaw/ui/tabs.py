@@ -15,14 +15,14 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QComboBox,
     QCheckBox, QSpinBox, QLineEdit, QTextEdit, QGroupBox,
-    QFormLayout, QMessageBox, QFileDialog, QDialog
+    QFormLayout, QFileDialog, QDialog
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QColor
 from typing import Optional
 import csv
 
-from .theme import Theme, ask_question
+from .theme import Theme, ask_question, set_role, FramelessDialog, FramelessMessageBox
 from .dialogs import (
     AgentRegistrationDialog, CommissionDialog, EditAgentDialog,
     NewPolicyDialog
@@ -123,7 +123,7 @@ class PoliciesTab(QWidget):
             "Double-click to edit."
         )
         help_text.setWordWrap(True)
-        help_text.setStyleSheet(f"color: {Theme.CHARCOAL}; margin-top: 8px;")
+        help_text.setProperty("role", "muted")
         layout.addWidget(help_text)
 
     def populate_table(self):
@@ -153,8 +153,9 @@ class PoliciesTab(QWidget):
 
             delete_btn = QPushButton("X")
             delete_btn.setFixedSize(28, 24)
+            delete_btn.setProperty("compact", "true")
             delete_btn.setToolTip("Delete")
-            delete_btn.setStyleSheet(f"font-size: 12px; font-weight: bold; background: {Theme.RUST}; color: {Theme.WHITE}; border-radius: 3px;")
+            delete_btn.setProperty("variant", "danger")
             delete_btn.clicked.connect(lambda checked, p=policy: self.delete_policy(p))
             actions_layout.addWidget(delete_btn)
 
@@ -262,10 +263,14 @@ class AgentsTab(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
         self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
         self.table.setColumnWidth(1, 70)
         self.table.setColumnWidth(2, 140)
-        self.table.setColumnWidth(6, 80)
+        self.table.setColumnWidth(4, 100)  # Spent Today
+        self.table.setColumnWidth(5, 90)   # Status
+        self.table.setColumnWidth(6, 95)   # Actions
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -279,7 +284,7 @@ class AgentsTab(QWidget):
             "Double-click to edit."
         )
         help_text.setWordWrap(True)
-        help_text.setStyleSheet(f"color: {Theme.CHARCOAL}; margin-top: 8px;")
+        help_text.setProperty("role", "muted")
         layout.addWidget(help_text)
 
     def populate_table(self):
@@ -302,13 +307,20 @@ class AgentsTab(QWidget):
             if agent.policy_id:
                 policy = self.core.get_policy(agent.policy_id)
                 policy_name = policy.name if policy else "Unknown"
+                self.table.setItem(row, 3, QTableWidgetItem(policy_name))
             else:
-                policy_name = "—"
-            self.table.setItem(row, 3, QTableWidgetItem(policy_name))
+                # Clickable "(assign policy)" for uncommissioned agents
+                policy_link = QLabel('<a href="#" style="color: {}; font-style: italic;">(assign policy)</a>'.format(Theme.LIME_DIM))
+                policy_link.setOpenExternalLinks(False)
+                policy_link.linkActivated.connect(lambda _, a=agent: self.commission_agent(a))
+                policy_link.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.table.setCellWidget(row, 3, policy_link)
 
             self.table.setItem(row, 4, QTableWidgetItem(agent.format_spent_today()))
 
-            status_item = QTableWidgetItem(agent.status)
+            # Display status - use "pending" for uncommissioned
+            display_status = "pending" if agent.status == "uncommissioned" else agent.status
+            status_item = QTableWidgetItem(display_status)
             if agent.status == "active":
                 status_item.setForeground(QColor(Theme.LIME_DIM))
             elif agent.status == "suspended":
@@ -316,7 +328,7 @@ class AgentsTab(QWidget):
             elif agent.status == "limit_reached":
                 status_item.setForeground(QColor(Theme.WARNING))
             else:
-                status_item.setForeground(QColor(Theme.CHARCOAL))
+                status_item.setForeground(QColor("#8f8b88"))  # Muted gray, visible in both themes
             self.table.setItem(row, 5, status_item)
 
             actions_widget = QWidget()
@@ -327,30 +339,28 @@ class AgentsTab(QWidget):
             # Primary action button: Commission / Activate / Suspend
             primary_btn = QPushButton()
             primary_btn.setFixedSize(28, 24)
+            primary_btn.setProperty("compact", "true")
 
             if agent.status == "uncommissioned":
-                # ^ for commission
-                primary_btn.setText("^")
+                primary_btn.setText("C")
                 primary_btn.setToolTip("Commission")
-                primary_btn.setStyleSheet(f"font-size: 14px; font-weight: bold; background: {Theme.LIME}; color: {Theme.BLACK}; border-radius: 3px;")
+                primary_btn.setProperty("variant", "primary")
                 primary_btn.clicked.connect(lambda checked, a=agent: self.commission_agent(a))
             elif agent.status == "suspended":
-                # > for enable (play)
-                primary_btn.setText(">")
-                primary_btn.setToolTip("Enable")
-                primary_btn.setStyleSheet(f"font-size: 14px; font-weight: bold; background: {Theme.LIME}; color: {Theme.BLACK}; border-radius: 3px;")
+                primary_btn.setText("A")
+                primary_btn.setToolTip("Activate")
+                primary_btn.setProperty("variant", "primary")
                 primary_btn.clicked.connect(lambda checked, a=agent: self.activate_agent(a))
             elif agent.status == "active":
-                # II for disable (pause)
-                primary_btn.setText("II")
-                primary_btn.setToolTip("Disable")
-                primary_btn.setStyleSheet(f"font-size: 11px; font-weight: bold; background: {Theme.RUST}; color: {Theme.WHITE}; border-radius: 3px;")
+                primary_btn.setText("S")
+                primary_btn.setToolTip("Suspend")
+                primary_btn.setProperty("variant", "danger")
                 primary_btn.clicked.connect(lambda checked, a=agent: self.suspend_agent(a))
             else:
-                # limit_reached or other states - show disable option
-                primary_btn.setText("II")
-                primary_btn.setToolTip("Disable")
-                primary_btn.setStyleSheet(f"font-size: 11px; font-weight: bold; background: {Theme.RUST}; color: {Theme.WHITE}; border-radius: 3px;")
+                # limit_reached or other states - show suspend option
+                primary_btn.setText("S")
+                primary_btn.setToolTip("Suspend")
+                primary_btn.setProperty("variant", "danger")
                 primary_btn.clicked.connect(lambda checked, a=agent: self.suspend_agent(a))
 
             actions_layout.addWidget(primary_btn)
@@ -358,8 +368,9 @@ class AgentsTab(QWidget):
             # Delete button - always available
             delete_btn = QPushButton("X")
             delete_btn.setFixedSize(28, 24)
+            delete_btn.setProperty("compact", "true")
             delete_btn.setToolTip("Delete")
-            delete_btn.setStyleSheet(f"font-size: 12px; font-weight: bold; background: {Theme.RUST}; color: {Theme.WHITE}; border-radius: 3px;")
+            delete_btn.setProperty("variant", "danger")
             delete_btn.clicked.connect(lambda checked, a=agent: self.delete_agent(a))
             actions_layout.addWidget(delete_btn)
 
@@ -370,7 +381,7 @@ class AgentsTab(QWidget):
         """Show dialog to register a new agent."""
         # Check if wallet is unlocked (core needs it for agent secret encryption)
         if not self.core.is_wallet_unlocked():
-            QMessageBox.warning(
+            FramelessMessageBox.warning(
                 self,
                 "Wallet Required",
                 "Please unlock a wallet first before registering an agent.\n\n"
@@ -566,7 +577,7 @@ class HistoryTab(QWidget):
 
         self.empty_label = QLabel("No transactions yet")
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_label.setStyleSheet("color: #666; font-size: 14px; padding: 40px;")
+        self.empty_label.setProperty("role", "empty")
         layout.addWidget(self.empty_label)
 
         # Auto-refresh timer (every 5 seconds)
@@ -588,14 +599,11 @@ class HistoryTab(QWidget):
         if count == 0:
             return
 
-        reply = QMessageBox.question(
+        if FramelessMessageBox.question(
             self,
             "Clear History",
-            f"Delete all {count} transaction(s) from history?\n\nThis cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        if reply == QMessageBox.StandardButton.Yes:
+            f"Delete all {count} transaction(s) from history?\n\nThis cannot be undone."
+        ):
             self.core.clear_transactions()
             self.refresh()
 
@@ -740,9 +748,9 @@ class HistoryTab(QWidget):
                         tx.wallet_id or "",
                         tx.tx_hash or ""
                     ])
-            QMessageBox.information(self, "Export Complete", f"Exported {len(self._transactions)} transactions to {filename}")
+            FramelessMessageBox.information(self, "Export Complete", f"Exported {len(self._transactions)} transactions to {filename}")
         except Exception as e:
-            QMessageBox.warning(self, "Export Failed", f"Could not export: {e}")
+            FramelessMessageBox.warning(self, "Export Failed", f"Could not export: {e}")
 
 
 # ============================================
@@ -791,7 +799,7 @@ class WalletTab(QWidget):
         lock_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         lock_icon = QLabel("🔒")
-        lock_icon.setStyleSheet("font-size: 48px;")
+        lock_icon.setFont(QFont("", 36))  # Large icon via font size
         lock_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lock_layout.addWidget(lock_icon)
 
@@ -801,7 +809,7 @@ class WalletTab(QWidget):
         lock_layout.addWidget(lock_title)
 
         lock_subtitle = QLabel("Enter your password to unlock")
-        lock_subtitle.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        lock_subtitle.setProperty("role", "muted")
         lock_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lock_layout.addWidget(lock_subtitle)
 
@@ -826,7 +834,7 @@ class WalletTab(QWidget):
         lock_layout.addLayout(pw_layout)
 
         self.lock_error_label = QLabel("")
-        self.lock_error_label.setStyleSheet(f"color: {Theme.ERROR};")
+        self.lock_error_label.setProperty("role", "error")
         self.lock_error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lock_layout.addWidget(self.lock_error_label)
 
@@ -843,10 +851,7 @@ class WalletTab(QWidget):
             "Your private keys are stored in plaintext."
         )
         self.unencrypted_warning.setWordWrap(True)
-        self.unencrypted_warning.setStyleSheet(
-            "background-color: #FFF3CD; color: #856404; padding: 8px; "
-            "border: 1px solid #FFECB5; border-radius: 4px; margin-bottom: 8px;"
-        )
+        self.unencrypted_warning.setObjectName("warningBox")  # Styled via QSS
         self.unencrypted_warning.setVisible(False)
         content_layout.addWidget(self.unencrypted_warning)
 
@@ -879,7 +884,7 @@ class WalletTab(QWidget):
 
         # Wallet name label (center-right of toolbar)
         self.wallet_label = QLabel("")
-        self.wallet_label.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        self.wallet_label.setProperty("role", "muted")
         toolbar.addWidget(self.wallet_label)
 
         # Detach wallet button (visible when wallet loaded)
@@ -924,7 +929,7 @@ class WalletTab(QWidget):
             "Each agent is linked to an address for signing payments."
         )
         help_text.setWordWrap(True)
-        help_text.setStyleSheet(f"color: {Theme.CHARCOAL}; margin-top: 8px;")
+        help_text.setProperty("role", "muted")
         content_layout.addWidget(help_text)
 
         layout.addWidget(self.content_widget)
@@ -1221,8 +1226,9 @@ class WalletTab(QWidget):
 
             delete_btn = QPushButton("X")
             delete_btn.setFixedSize(28, 24)
+            delete_btn.setProperty("compact", "true")
             delete_btn.setToolTip("Remove address")
-            delete_btn.setStyleSheet(f"font-size: 12px; font-weight: bold; background: {Theme.RUST}; color: {Theme.WHITE}; border-radius: 3px;")
+            delete_btn.setProperty("variant", "danger")
             delete_btn.clicked.connect(lambda checked, aid=addr.id: self.delete_address(aid))
             actions_layout.addWidget(delete_btn)
 
@@ -1321,7 +1327,7 @@ class WalletTab(QWidget):
         wallet_path = Path(file_path)
 
         if not wallet_path.exists():
-            QMessageBox.warning(self, "File Not Found", f"Wallet file not found:\n{file_path}")
+            FramelessMessageBox.warning(self, "File Not Found", f"Wallet file not found:\n{file_path}")
             return
 
         # Check if encrypted
@@ -1338,7 +1344,7 @@ class WalletTab(QWidget):
             result = self.core.load_wallet(str(wallet_path), NO_PASSWORD_SENTINEL)
 
         if not result.get("success"):
-            QMessageBox.warning(self, "Load Failed", f"Could not load wallet:\n{result.get('error')}")
+            FramelessMessageBox.warning(self, "Load Failed", f"Could not load wallet:\n{result.get('error')}")
             return
 
         # Update local state from core
@@ -1368,14 +1374,11 @@ class WalletTab(QWidget):
 
         # Check if file already exists
         if new_wallet_path.exists():
-            reply = QMessageBox.question(
+            if not FramelessMessageBox.question(
                 self,
                 "File Exists",
-                f"A wallet named '{wallet_filename}' already exists.\n\nDo you want to overwrite it?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No
-            )
-            if reply != QMessageBox.StandardButton.Yes:
+                f"A wallet named '{wallet_filename}' already exists.\n\nDo you want to overwrite it?"
+            ):
                 return
 
         # Now run the wallet creation wizard
@@ -1564,15 +1567,7 @@ class WalletTab(QWidget):
 
         warning_msg += "This action cannot be undone."
 
-        reply = QMessageBox.question(
-            self,
-            "Delete Seed",
-            warning_msg,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
+        if FramelessMessageBox.question(self, "Delete Seed", warning_msg):
             # Delete the seed and all its addresses through core
             result = self.core.remove_seed(seed_id, remove_addresses=True)
 
@@ -1635,7 +1630,7 @@ class WalletTab(QWidget):
 
         if seed_id in existing_seed_ids:
             # Seed already exists - show message and open derivation browser
-            QMessageBox.information(
+            FramelessMessageBox.information(
                 self,
                 "Seed Already Exists",
                 f"This seed phrase already exists as {seed_id}.\n\n"
@@ -1673,12 +1668,12 @@ class WalletTab(QWidget):
     def _on_sweep_clicked(self):
         """Open the sweep USDC dialog."""
         if not self._wallet or not self._is_unlocked:
-            QMessageBox.warning(self, "Wallet Required", "Please unlock your wallet first.")
+            FramelessMessageBox.warning(self, "Wallet Required", "Please unlock your wallet first.")
             return
 
         addresses = self._wallet.addresses
         if len(addresses) < 2:
-            QMessageBox.information(
+            FramelessMessageBox.information(
                 self, "Not Enough Addresses",
                 "Sweep requires at least 2 addresses (sponsor + donor or recipient)."
             )
@@ -1728,15 +1723,7 @@ class WalletTab(QWidget):
         else:
             warning_msg += "No agents are currently linked to this wallet."
 
-        reply = QMessageBox.question(
-            self,
-            "Detach Wallet",
-            warning_msg,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
+        if FramelessMessageBox.question(self, "Detach Wallet", warning_msg):
             wallet_name = self._wallet_path.name
 
             # Emit wallet_deleted for each address (for agent cleanup)
@@ -1770,12 +1757,10 @@ class WalletTab(QWidget):
                         all_linked_agents.append(agent)
 
         # Create custom confirmation dialog
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Delete Wallet")
+        dialog = FramelessDialog("Delete Wallet", self, width=400)
         dialog.setModal(True)
-        dialog.setFixedWidth(400)
 
-        layout = QVBoxLayout(dialog)
+        layout = dialog.content_layout
         layout.setSpacing(12)
 
         # Warning message with bold "permanently deleted"
@@ -1901,15 +1886,7 @@ class WalletTab(QWidget):
         else:
             warning_msg += "No agents are linked to this address."
 
-        reply = QMessageBox.question(
-            self,
-            "Remove Address",
-            warning_msg,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
+        if FramelessMessageBox.question(self, "Remove Address", warning_msg):
             result = self.core.remove_address(address_id)
 
             if result.get("success"):
@@ -2052,7 +2029,7 @@ class NetworkTab(QWidget):
         listener_layout.addRow("Port:", self.port_input)
 
         self.server_status_label = QLabel("● Stopped")
-        self.server_status_label.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        self.server_status_label.setProperty("role", "muted")
         listener_layout.addRow("Status:", self.server_status_label)
 
         self.allow_lan_checkbox = QCheckBox("Allow LAN connections")
@@ -2080,7 +2057,7 @@ class NetworkTab(QWidget):
 
         networks_desc = QLabel("Enable networks for signing. Disabled networks reject all requests.")
         networks_desc.setWordWrap(True)
-        networks_desc.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        networks_desc.setProperty("role", "muted")
         networks_layout.addWidget(networks_desc)
 
         # Create table-like grid: [Checkbox] [Network Name] [RPC Input]
@@ -2128,7 +2105,7 @@ class NetworkTab(QWidget):
             name_label = QLabel(network.display_name)
             name_label.setMinimumWidth(130)
             if network.is_testnet:
-                name_label.setStyleSheet(f"color: {Theme.CHARCOAL};")
+                name_label.setProperty("role", "muted")
             networks_grid.addWidget(name_label, row, 1)
 
             # RPC input
@@ -2168,7 +2145,7 @@ class NetworkTab(QWidget):
 
         rate_desc = QLabel("Request rate limiting protects against runaway agent loops.")
         rate_desc.setWordWrap(True)
-        rate_desc.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        rate_desc.setProperty("role", "muted")
         left_col.addWidget(rate_desc)
 
         rate_form = QFormLayout()
@@ -2274,7 +2251,7 @@ class NetworkTab(QWidget):
         """Handle server started."""
         self._port = port
         self.server_status_label.setText("● Running")
-        self.server_status_label.setStyleSheet(f"color: {Theme.LIME_DIM};")
+        set_role(self.server_status_label, status="on")
         self.server_toggle_btn.setText("Stop Server")
         self._update_endpoint_label(port)
         self.port_input.setEnabled(False)
@@ -2284,7 +2261,7 @@ class NetworkTab(QWidget):
     def on_server_stopped(self):
         """Handle server stopped."""
         self.server_status_label.setText("● Stopped")
-        self.server_status_label.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        set_role(self.server_status_label, role="muted")
         self.server_toggle_btn.setText("Start Server")
         # Only enable editing if custom port mode is on
         if self._custom_port_enabled:
@@ -2295,7 +2272,7 @@ class NetworkTab(QWidget):
     def on_server_error(self, error: str):
         """Handle server error."""
         self.server_status_label.setText("● Error")
-        self.server_status_label.setStyleSheet(f"color: {Theme.ERROR};")
+        set_role(self.server_status_label, role="error")
         self.activity.emit(f"Server error: {error}", True, False)
 
     def on_network_toggled(self, chain_id: int, state: int):
@@ -2386,6 +2363,7 @@ class SettingsTab(QWidget):
 
     settings_changed = pyqtSignal(dict)  # Emitted when any setting changes
     auto_lock_changed = pyqtSignal(int)  # Emitted when auto-lock timeout changes (minutes)
+    theme_changed = pyqtSignal(str)  # Emitted when theme changes ("light" or "dark")
 
     def __init__(self, settings: dict = None):
         super().__init__()
@@ -2399,7 +2377,7 @@ class SettingsTab(QWidget):
 
         notif_desc = QLabel("Control how MultiClaw notifies you about events.")
         notif_desc.setWordWrap(True)
-        notif_desc.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        notif_desc.setProperty("role", "muted")
         notif_layout.addRow(notif_desc)
 
         self.sound_checkbox = QCheckBox("Play sound for approval requests")
@@ -2419,8 +2397,8 @@ class SettingsTab(QWidget):
 
         layout.addWidget(notif_group)
 
-        # Window behavior group
-        window_group = QGroupBox("Window Behavior")
+        # Window and appearance group
+        window_group = QGroupBox("Window and Appearance")
         window_layout = QFormLayout(window_group)
 
         self.minimize_to_tray_checkbox = QCheckBox("Minimize to system tray instead of taskbar")
@@ -2437,6 +2415,27 @@ class SettingsTab(QWidget):
         self.start_minimized_checkbox.setChecked(self._settings.get("start_minimized", False))
         self.start_minimized_checkbox.stateChanged.connect(self._on_setting_changed)
         window_layout.addRow(self.start_minimized_checkbox)
+
+        # Theme toggle (Light / Dark)
+        from PyQt6.QtWidgets import QButtonGroup
+        theme_row = QWidget()
+        theme_layout = QHBoxLayout(theme_row)
+        theme_layout.setContentsMargins(0, 0, 0, 0)
+        theme_layout.setSpacing(0)
+        self.theme_group = QButtonGroup(self)
+        self.theme_group.setExclusive(True)
+        self.theme_light_btn = QPushButton("Light")
+        self.theme_dark_btn = QPushButton("Dark")
+        for i, btn in enumerate((self.theme_light_btn, self.theme_dark_btn)):
+            btn.setCheckable(True)
+            btn.setProperty("segment", "true")
+            self.theme_group.addButton(btn, i)
+            theme_layout.addWidget(btn)
+        theme_layout.addStretch()
+        is_dark = self._settings.get("theme", "light") == "dark"
+        (self.theme_dark_btn if is_dark else self.theme_light_btn).setChecked(True)
+        self.theme_group.idClicked.connect(self._on_theme_changed)
+        window_layout.addRow("Theme:", theme_row)
 
         layout.addWidget(window_group)
 
@@ -2457,7 +2456,7 @@ class SettingsTab(QWidget):
 
         security_desc = QLabel("Automatically lock wallet after period of inactivity.")
         security_desc.setWordWrap(True)
-        security_desc.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        security_desc.setProperty("role", "muted")
         security_layout.addRow(security_desc)
 
         self.auto_lock_input = QSpinBox()
@@ -2472,7 +2471,7 @@ class SettingsTab(QWidget):
         # Replay window for signed requests
         replay_desc = QLabel("Maximum age for signed agent requests (prevents replay attacks).")
         replay_desc.setWordWrap(True)
-        replay_desc.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        replay_desc.setProperty("role", "muted")
         security_layout.addRow(replay_desc)
 
         self.replay_window_input = QSpinBox()
@@ -2490,7 +2489,7 @@ class SettingsTab(QWidget):
 
         # Version info at bottom
         version_label = QLabel(f"MultiClaw v{__version__}")
-        version_label.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        version_label.setProperty("role", "muted")
         version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(version_label)
 
@@ -2519,6 +2518,12 @@ class SettingsTab(QWidget):
         self.auto_lock_input.setValue(settings.get("auto_lock_minutes", 0))
         self.replay_window_input.setValue(settings.get("replay_window_seconds", 300))
 
+        # Theme toggle
+        self.theme_group.blockSignals(True)
+        is_dark = settings.get("theme", "light") == "dark"
+        (self.theme_dark_btn if is_dark else self.theme_light_btn).setChecked(True)
+        self.theme_group.blockSignals(False)
+
         self.sound_checkbox.blockSignals(False)
         self.toast_checkbox.blockSignals(False)
         self.flash_checkbox.blockSignals(False)
@@ -2541,6 +2546,7 @@ class SettingsTab(QWidget):
             "auto_start_server": self.auto_start_server_checkbox.isChecked(),
             "auto_lock_minutes": self.auto_lock_input.value(),
             "replay_window_seconds": self.replay_window_input.value(),
+            "theme": "dark" if self.theme_dark_btn.isChecked() else "light",
         }
 
     def _on_setting_changed(self, state: int):
@@ -2553,6 +2559,13 @@ class SettingsTab(QWidget):
         self._settings["auto_lock_minutes"] = value
         self.settings_changed.emit(self._settings)
         self.auto_lock_changed.emit(value)
+
+    def _on_theme_changed(self, button_id: int):
+        """Handle theme toggle change."""
+        theme = "dark" if button_id == 1 else "light"
+        self._settings["theme"] = theme
+        self.settings_changed.emit(self._settings)
+        self.theme_changed.emit(theme)
 
 
 # ============================================
@@ -2591,49 +2604,22 @@ class LogTab(QWidget):
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setFont(QFont(Theme.MONO_FONT, 10))
-
-        # Dark terminal styling (using Theme colors)
-        self.log_view.setStyleSheet(f"""
-            QTextEdit {{
-                background-color: {Theme.BLACK};
-                color: {Theme.LIME};
-                border: none;
-                padding: 12px;
-                selection-background-color: {Theme.LIME_DIM};
-            }}
-        """)
+        self.log_view.setObjectName("terminal")  # Styled via QSS #terminal selector
 
         # Set initial content with ASCII banner
         self.log_view.setHtml(MULTICLAW_ASCII)
 
         layout.addWidget(self.log_view)
 
-        # Control bar with dark styling
+        # Control bar
         controls = QHBoxLayout()
         controls.setContentsMargins(8, 4, 8, 8)
 
-        # Button style using Theme colors
-        btn_style = f"""
-            QPushButton {{
-                background-color: {Theme.BLACK_LIGHT};
-                color: {Theme.LIME};
-                border: 1px solid {Theme.CHARCOAL};
-                padding: 4px 12px;
-                font-family: {Theme.MONO_FONT};
-            }}
-            QPushButton:hover {{
-                background-color: {Theme.CHARCOAL};
-                border-color: {Theme.LIME};
-            }}
-        """
-
         clear_btn = QPushButton("Clear")
-        clear_btn.setStyleSheet(btn_style)
         clear_btn.clicked.connect(self.clear_logs)
         controls.addWidget(clear_btn)
 
         copy_btn = QPushButton("Copy")
-        copy_btn.setStyleSheet(btn_style)
         copy_btn.clicked.connect(self.copy_logs)
         controls.addWidget(copy_btn)
 

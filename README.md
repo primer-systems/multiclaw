@@ -1,4 +1,4 @@
-# MultiClaw v2.3.0
+# MultiClaw v2.6.0
 
 ![Tests](https://github.com/primer-systems/multiclaw/actions/workflows/test.yml/badge.svg)
 
@@ -48,7 +48,7 @@ Any agent framework can integrate via HTTP to `localhost:9402` — Claude, GPT, 
 - **Human Approval** — Payments above threshold trigger a dialog in the app
 - **AP2 Intent Mandates** — Signed VDCs document authorization, publishable to AP2 registry for merchant verification
 
-![Screenshot](https://raw.githubusercontent.com/primer-systems/multiclaw/main/docs/manifoldss2.png)
+![Edit Agent](https://raw.githubusercontent.com/primer-systems/multiclaw/main/docs/ss_editagent.png)
 
 ## Where Authorization Happens
 
@@ -106,7 +106,27 @@ When a policy violation occurs (limit exceeded, blocked domain, manual rejection
 
 The demo video shows this in action: an agent exceeds its daily limit and is forced to reconsider its approach.
 
-![Screenshot](https://raw.githubusercontent.com/primer-systems/multiclaw/main/docs/manifoldss1.png)
+![History](https://raw.githubusercontent.com/primer-systems/multiclaw/main/docs/ss_history.png)
+
+## Discovering Services — Agentic.Market
+
+MultiClaw integrates with [Agentic.Market](https://agentic.market), the public x402 service marketplace operated by Coinbase — nearly 500 services across Inference, Data, Search, Media, Social, Trading, and Infra, all payable per-request in USDC on Base with no API keys or accounts.
+
+**In the GUI:** the **Market** tab browses and searches the live catalog (`api.agentic.market`), filters by category, and generates a copy-to-clipboard **agent snippet** for any service — so you can hand an agent a ready-to-use x402 endpoint.
+
+**For agents:** the bundled skill lets an agent discover services programmatically and filter them against its own MultiClaw spend policy *before* paying, so it only surfaces what it can actually afford:
+
+```bash
+# Browse the catalog
+curl https://api.agentic.market/v1/services?limit=500
+
+# Search by keyword
+curl "https://api.agentic.market/v1/services/search?q=weather"
+```
+
+Once a service is chosen, the agent pays for it through the same **detect paywall → request signature → retry with payment → report settlement** flow described above.
+
+![Market](https://raw.githubusercontent.com/primer-systems/multiclaw/main/docs/ss_market.png)
 
 ## Technical Details
 
@@ -161,7 +181,7 @@ MultiClaw.exe wallet status
 
 For a hybrid approach, the GUI includes a built-in terminal console (File → Console) that accepts the same commands as the CLI — without leaving the application.
 
-![Console](https://raw.githubusercontent.com/primer-systems/multiclaw/main/docs/consoless.png)
+![Agents & Console](https://raw.githubusercontent.com/primer-systems/multiclaw/main/docs/ss_agents_console.png)
 
 ### Single Instance
 

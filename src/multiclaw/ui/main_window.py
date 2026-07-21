@@ -7,14 +7,15 @@ Contains the header, tabs, status bar, and system tray.
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTabWidget, QStatusBar, QMenuBar, QMenu, QFrame, QTextEdit,
-    QSystemTrayIcon, QStyle, QMessageBox, QApplication, QDialog
+    QSystemTrayIcon, QStyle, QApplication, QDialog,
+    QPushButton, QSizeGrip
 )
-from PyQt6.QtCore import Qt, QTimer, QObject, pyqtSignal
-from PyQt6.QtGui import QAction, QIcon, QFont, QPixmap
+from PyQt6.QtCore import Qt, QTimer, QObject, pyqtSignal, QPoint
+from PyQt6.QtGui import QAction, QIcon, QFont, QPixmap, QMouseEvent
 from typing import Optional, TYPE_CHECKING
 from datetime import datetime
 
-from .theme import Theme
+from .theme import Theme, DARK, build_qss, set_role, FramelessMessageBox
 from .tabs import (
     PoliciesTab, AgentsTab, HistoryTab, WalletTab, NetworkTab, LogTab
 )
@@ -86,15 +87,37 @@ class MainWindow(QMainWindow):
         self.server_running = False
         self._console_window = None
 
+        # Frameless window setup
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        self._drag_pos: QPoint | None = None
+        self._is_maximized = False
+
+        # Enable DWM shadow on Windows
+        self._enable_dwm_shadow()
+
         self.setWindowTitle("MultiClaw - Get a Grip on Your Agents")
         self.setMinimumSize(900, 600)
 
-        self.create_menu_bar()
-
         central = QWidget()
         self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
+        outer_layout = QVBoxLayout(central)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        # Border frame wraps all content
+        self.window_frame = QFrame()
+        self.window_frame.setObjectName("windowFrame")
+        self.window_frame.setFrameShape(QFrame.Shape.Box)
+        outer_layout.addWidget(self.window_frame)
+
+        layout = QVBoxLayout(self.window_frame)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Custom title bar (replaces native menu bar)
+        self.title_bar = self.create_title_bar()
+        layout.addWidget(self.title_bar)
 
         self.header = self.create_header()
         layout.addWidget(self.header)
@@ -104,6 +127,11 @@ class MainWindow(QMainWindow):
         # Create status bar early (before signals that might trigger update_status)
         self.status = QStatusBar()
         self.setStatusBar(self.status)
+
+        # --- Tagline (bottom-right of the status bar) ---
+        self.statusbar_tagline = QLabel("MultiClaw - Get a Grip on Your Agents!")
+        self.statusbar_tagline.setProperty("role", "tagline")
+        self.status.addPermanentWidget(self.statusbar_tagline)
 
         # Create all tabs first - all tabs receive core, not store
         self.agents_tab = AgentsTab(self.core)
@@ -191,6 +219,9 @@ class MainWindow(QMainWindow):
         self.setup_signing_service()
         self.setup_event_subscriptions()
 
+        # Apply theme (default to light)
+        self.apply_theme(self._settings.get("theme", "light"))
+
         # Initialize status indicators
         self.update_status_indicators()
 
@@ -199,7 +230,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.hide if self._settings.get("minimize_to_tray", False) else self.showMinimized)
 
         # Auto-start server if enabled
-        if self._settings.get("auto_start_server", False):
+        if self._settings.get("auto_start_server", True):
             QTimer.singleShot(500, self.network_tab.toggle_server)
 
     def _get_agents_for_address(self, wallet_address: str) -> list:
@@ -252,10 +283,7 @@ class MainWindow(QMainWindow):
         self.server_running = running
         self.update_status()
         self.update_status_indicators()
-        if running:
-            self.update_activity(f"Server started on port {self.core.server_port}")
-        else:
-            self.update_activity("Server stopped")
+        # Activity messages are emitted by core via event bus - no need to duplicate here
 
     def on_custom_port_changed(self, enabled: bool):
         """Handle custom port setting change from Network tab."""
@@ -312,28 +340,17 @@ class MainWindow(QMainWindow):
         """Update all three status indicators in the header."""
         # Wallet indicator - green only if we have wallets AND unlocked
         has_wallets = len(self.wallet_tab.get_wallet_list()) > 0
-        if has_wallets and self.wallet_tab.is_unlocked:
-            self.wallet_indicator.setStyleSheet(f"color: {Theme.LIME}; font-size: 12px;")
-            self.wallet_label.setStyleSheet(f"color: {Theme.LIME};")
-        else:
-            self.wallet_indicator.setStyleSheet(f"color: {Theme.RUST}; font-size: 12px;")
-            self.wallet_label.setStyleSheet(f"color: {Theme.RUST};")
+        wallet_on = has_wallets and self.wallet_tab.is_unlocked
+        set_role(self.wallet_indicator, status="on" if wallet_on else "off")
+        set_role(self.wallet_label, status="on" if wallet_on else "off")
 
         # Server indicator
-        if self.server_running:
-            self.server_indicator.setStyleSheet(f"color: {Theme.LIME}; font-size: 12px;")
-            self.server_label.setStyleSheet(f"color: {Theme.LIME};")
-        else:
-            self.server_indicator.setStyleSheet(f"color: {Theme.RUST}; font-size: 12px;")
-            self.server_label.setStyleSheet(f"color: {Theme.RUST};")
+        set_role(self.server_indicator, status="on" if self.server_running else "off")
+        set_role(self.server_label, status="on" if self.server_running else "off")
 
         # Signing indicator
-        if self.signing_enabled:
-            self.signing_indicator.setStyleSheet(f"color: {Theme.LIME}; font-size: 12px;")
-            self.signing_label.setStyleSheet(f"color: {Theme.LIME};")
-        else:
-            self.signing_indicator.setStyleSheet(f"color: {Theme.RUST}; font-size: 12px;")
-            self.signing_label.setStyleSheet(f"color: {Theme.RUST};")
+        set_role(self.signing_indicator, status="on" if self.signing_enabled else "off")
+        set_role(self.signing_label, status="on" if self.signing_enabled else "off")
 
     def _load_settings(self) -> dict:
         """Load GUI-specific settings from disk.
@@ -366,6 +383,41 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logging.getLogger(__name__).error(f"Failed to save GUI settings: {e}")
 
+    def apply_theme(self, theme_name: str = "light"):
+        """Apply the selected theme (light or dark) to the application."""
+        from .theme import LIGHT, DARK, build_qss
+        palette = DARK if theme_name == "dark" else LIGHT
+        app = QApplication.instance()
+        if app:
+            app.setStyleSheet(build_qss(palette))
+        self._settings["theme"] = theme_name
+        self._save_settings()
+        # Update logo for theme
+        self._update_logo()
+
+    def _update_logo(self):
+        """Update logo based on current theme."""
+        theme = getattr(self, '_settings', {}).get("theme", "light")
+        if theme == "light":
+            logo_path = get_assets_dir() / "wm_stacked_lightmode.png"
+        else:
+            logo_path = get_assets_dir() / "wm_stacked.png"
+
+        if logo_path.exists():
+            pixmap = QPixmap(str(logo_path))
+            scaled = pixmap.scaledToHeight(57, Qt.TransformationMode.SmoothTransformation)
+            self.logo_label.setPixmap(scaled)
+        else:
+            # Fallback to default or text
+            fallback = get_assets_dir() / "wm_stacked.png"
+            if fallback.exists():
+                pixmap = QPixmap(str(fallback))
+                scaled = pixmap.scaledToHeight(57, Qt.TransformationMode.SmoothTransformation)
+                self.logo_label.setPixmap(scaled)
+            else:
+                self.logo_label.setText("MULTICLAW")
+                self.logo_label.setObjectName("logo")
+
     def update_status(self):
         """Update status bar."""
         if self.core.is_server_running():
@@ -375,40 +427,35 @@ class MainWindow(QMainWindow):
 
     def create_header(self) -> QFrame:
         header = QFrame()
-        header.setStyleSheet(f"background-color: {Theme.BLACK};")
-        header.setFixedHeight(100)
+        header.setObjectName("header")  # Styled via QSS #header selector
+        header.setFixedHeight(140)
 
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(16, 12, 16, 12)
 
-        # Logo on the left
-        logo_label = QLabel()
-        logo_path = get_assets_dir() / "wm_stacked.png"
-        if logo_path.exists():
-            pixmap = QPixmap(str(logo_path))
-            scaled = pixmap.scaledToHeight(57, Qt.TransformationMode.SmoothTransformation)
-            logo_label.setPixmap(scaled)
-        else:
-            logo_label.setText("MULTICLAW")
-            logo_label.setStyleSheet(f"color: {Theme.LIME}; font-weight: bold; font-size: 16px;")
+        # Logo on the left (stored for theme switching)
+        self.logo_label = QLabel()
+        self._update_logo()
 
-        header_layout.addWidget(logo_label, alignment=Qt.AlignmentFlag.AlignVCenter)
+        header_layout.addWidget(self.logo_label, alignment=Qt.AlignmentFlag.AlignVCenter)
         header_layout.addStretch()
 
         # Center: Three status indicators stacked vertically
         status_layout = QVBoxLayout()
-        status_layout.setSpacing(2)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(0)
 
         # Wallet indicator
         wallet_row = QHBoxLayout()
         wallet_row.setSpacing(4)
         self.wallet_indicator = QLabel("●")
-        self.wallet_indicator.setStyleSheet(f"color: {Theme.RUST}; font-size: 12px;")
-        self.wallet_indicator.setFixedWidth(12)
+        self.wallet_indicator.setProperty("status", "off")
+        self.wallet_indicator.setFixedSize(12, 14)
         wallet_row.addWidget(self.wallet_indicator)
         self.wallet_label = QLabel("Wallet")
         self.wallet_label.setFont(QFont(Theme.MONO_FONT, 9))
-        self.wallet_label.setStyleSheet(f"color: {Theme.RUST};")
+        self.wallet_label.setFixedHeight(14)
+        self.wallet_label.setProperty("status", "off")
         self.wallet_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.wallet_label.mousePressEvent = lambda e: self.on_wallet_indicator_clicked()
         wallet_row.addWidget(self.wallet_label)
@@ -418,27 +465,29 @@ class MainWindow(QMainWindow):
         server_row = QHBoxLayout()
         server_row.setSpacing(4)
         self.server_indicator = QLabel("●")
-        self.server_indicator.setStyleSheet(f"color: {Theme.RUST}; font-size: 12px;")
-        self.server_indicator.setFixedWidth(12)
+        self.server_indicator.setProperty("status", "off")
+        self.server_indicator.setFixedSize(12, 14)
         server_row.addWidget(self.server_indicator)
         self.server_label = QLabel("Server")
         self.server_label.setFont(QFont(Theme.MONO_FONT, 9))
-        self.server_label.setStyleSheet(f"color: {Theme.RUST};")
+        self.server_label.setFixedHeight(14)
+        self.server_label.setProperty("status", "off")
         self.server_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.server_label.mousePressEvent = lambda e: self.on_server_indicator_clicked()
         server_row.addWidget(self.server_label)
         status_layout.addLayout(server_row)
 
-        # Signing indicator
+        # Signing indicator (starts enabled)
         signing_row = QHBoxLayout()
         signing_row.setSpacing(4)
         self.signing_indicator = QLabel("●")
-        self.signing_indicator.setStyleSheet(f"color: {Theme.LIME}; font-size: 12px;")
-        self.signing_indicator.setFixedWidth(12)
+        self.signing_indicator.setProperty("status", "on")
+        self.signing_indicator.setFixedSize(12, 14)
         signing_row.addWidget(self.signing_indicator)
         self.signing_label = QLabel("Signing")
         self.signing_label.setFont(QFont(Theme.MONO_FONT, 9))
-        self.signing_label.setStyleSheet(f"color: {Theme.LIME};")
+        self.signing_label.setFixedHeight(14)
+        self.signing_label.setProperty("status", "on")
         self.signing_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.signing_label.mousePressEvent = lambda e: self.toggle_global_signing()
         signing_row.addWidget(self.signing_label)
@@ -449,18 +498,17 @@ class MainWindow(QMainWindow):
 
         self.activity_log = QTextEdit()
         self.activity_log.setReadOnly(True)
-        self.activity_log.setFont(QFont(Theme.MONO_FONT, 9))
-        self.activity_log.setStyleSheet(f"""
-            QTextEdit {{
-                background-color: transparent;
-                border: none;
-                color: {Theme.LIME_DIM};
-            }}
-        """)
+        font = QFont(Theme.MONO_FONT, 9)
+        self.activity_log.setFont(font)
+        # Activity log is styled via QSS: QWidget#header QTextEdit
         self.activity_log.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.activity_log.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.activity_log.setMinimumWidth(450)
-        self.activity_log.setMaximumHeight(76)
+        # Calculate height for 6 lines using font metrics, plus half line buffer for HTML rendering
+        self.activity_log.document().setDocumentMargin(0)
+        from PyQt6.QtGui import QFontMetrics
+        line_height = QFontMetrics(font).lineSpacing()
+        self.activity_log.setFixedHeight(line_height * 6 + line_height // 2)
 
         self.activity_entries = []
 
@@ -483,13 +531,10 @@ class MainWindow(QMainWindow):
         entry = f'<span style="color: {color};">[{timestamp}] {message}</span>'
         self.activity_entries.append(entry)
 
-        if len(self.activity_entries) > 5:
-            self.activity_entries = self.activity_entries[-5:]
+        if len(self.activity_entries) > 6:
+            self.activity_entries = self.activity_entries[-6:]
 
         self.activity_log.setHtml("<br>".join(self.activity_entries))
-
-        scrollbar = self.activity_log.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
 
         # Also write to Logs tab
         self.log_tab.add_log(message)
@@ -695,30 +740,21 @@ class MainWindow(QMainWindow):
         else:
             resource_str = ""
 
-        msg = QMessageBox(self)
-        msg.setIcon(QMessageBox.Icon.Question)
-        msg.setWindowTitle("Payment Approval Required")
-        msg.setText(f"Agent '{request.agent_name}' is requesting payment authorization.")
-        msg.setInformativeText(
+        message = (
+            f"Agent '{request.agent_name}' is requesting payment authorization.\n\n"
             f"Amount: {amount_str}\n"
             f"Network: {request.network}\n"
             f"Recipient: {format_address(request.recipient)}"
             f"{resource_str}"
         )
-        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        msg.setDefaultButton(QMessageBox.StandardButton.No)
-        msg.button(QMessageBox.StandardButton.Yes).setText("Approve")
-        msg.button(QMessageBox.StandardButton.No).setText("Reject")
 
-        result = msg.exec()
-
-        if result == QMessageBox.StandardButton.Yes:
+        if FramelessMessageBox.question(self, "Payment Approval Required", message):
             response = self.core.approve_request(request.id)
             if response.get("status") == "success":
                 self.update_activity(f"Approved: {amount_str} for {request.agent_name}")
             else:
                 self.update_activity(f"Approval failed: {response.get('error')}", is_error=True)
-                QMessageBox.warning(self, "Signing Failed", response.get("error", "Unknown error"))
+                FramelessMessageBox.warning(self, "Signing Failed", response.get("error", "Unknown error"))
         else:
             self.core.reject_request(request.id, "User rejected")
             self.update_activity(f"Rejected: {amount_str} for {request.agent_name}", is_warning=True)
@@ -815,11 +851,11 @@ class MainWindow(QMainWindow):
 
         wallets = self.wallet_tab.get_wallet_list()
         if not wallets:
-            QMessageBox.information(self, "No Addresses", "No addresses to export.")
+            FramelessMessageBox.information(self, "No Addresses", "No addresses to export.")
             return
 
         if not self.wallet_tab.is_unlocked:
-            QMessageBox.warning(
+            FramelessMessageBox.warning(
                 self, "Wallet Locked",
                 "Please unlock your wallet first to export keys."
             )
@@ -841,6 +877,7 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self._settings, self)
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.has_changes():
             new_settings = dialog.get_settings()
+            old_theme = self._settings.get("theme", "light")
             self._settings.update(new_settings)
             self._save_settings()
 
@@ -854,6 +891,11 @@ class MainWindow(QMainWindow):
             replay_window = new_settings.get("replay_window_seconds", 300)
             self.core.set_max_request_age(replay_window)
 
+            # Apply theme if changed
+            new_theme = new_settings.get("theme", "light")
+            if new_theme != old_theme:
+                self.apply_theme(new_theme)
+
     def register_agent(self):
         """Open the agent registration dialog."""
         self.tabs.setCurrentWidget(self.agents_tab)
@@ -864,23 +906,19 @@ class MainWindow(QMainWindow):
         active_agents = [a for a in self.core.get_all_agents() if a.status == "active"]
 
         if not active_agents:
-            QMessageBox.information(
+            FramelessMessageBox.information(
                 self,
                 "No Active Agents",
                 "There are no active agents to suspend."
             )
             return
 
-        reply = QMessageBox.question(
+        if FramelessMessageBox.question(
             self,
             "Suspend All Agents",
             f"Suspend all {len(active_agents)} active agent(s)?\n\n"
-            "This will reject all signing requests until agents are reactivated.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
+            "This will reject all signing requests until agents are reactivated."
+        ):
             for agent in active_agents:
                 self.core.suspend_agent(agent.code)
 
@@ -894,24 +932,23 @@ class MainWindow(QMainWindow):
 
     def show_about(self):
         """Show the About MultiClaw dialog."""
-        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QDialogButtonBox
+        from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QDialogButtonBox
         from PyQt6.QtCore import Qt
+        from .theme import FramelessDialog
 
-        dialog = QDialog(self)
-        dialog.setWindowTitle("About MultiClaw")
-        dialog.setMinimumWidth(400)
+        dialog = FramelessDialog("About MultiClaw", self, width=400)
 
-        layout = QVBoxLayout(dialog)
+        layout = dialog.content_layout
         layout.setSpacing(12)
 
         # Tagline
         tagline = QLabel("MultiClaw, by Primer")
-        tagline.setStyleSheet(f"font-style: italic;")
+        tagline.setProperty("role", "hint")
         layout.addWidget(tagline)
 
         # Version
         version = QLabel(f"Version {__version__}")
-        version.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        version.setProperty("role", "muted")
         layout.addWidget(version)
 
         layout.addSpacing(4)
@@ -965,13 +1002,12 @@ class MainWindow(QMainWindow):
 
     def show_quick_start(self):
         """Show the Quick Start guide dialog."""
-        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QDialogButtonBox
+        from PyQt6.QtWidgets import QVBoxLayout, QLabel, QDialogButtonBox
+        from .theme import FramelessDialog
 
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Quick Start")
-        dialog.setMinimumWidth(480)
+        dialog = FramelessDialog("Quick Start", self, width=480)
 
-        layout = QVBoxLayout(dialog)
+        layout = dialog.content_layout
         layout.setSpacing(8)
 
         # Steps
@@ -992,7 +1028,7 @@ class MainWindow(QMainWindow):
 
             if hint:
                 hint_label = QLabel(f"    <i>{hint}</i>")
-                hint_label.setStyleSheet(f"color: {Theme.CHARCOAL};")
+                hint_label.setProperty("role", "muted")
                 layout.addWidget(hint_label)
 
         layout.addSpacing(12)
@@ -1041,3 +1077,212 @@ class MainWindow(QMainWindow):
                     QTimer.singleShot(0, self.hide)
                     return
         super().changeEvent(event)
+
+    # ------------------------------------------------------------------
+    # Custom Title Bar & Frameless Window
+    # ------------------------------------------------------------------
+
+    def create_title_bar(self) -> QFrame:
+        """Create custom title bar with menus and window controls."""
+        title_bar = QFrame()
+        title_bar.setObjectName("titleBar")
+        title_bar.setFixedHeight(36)
+
+        layout = QHBoxLayout(title_bar)
+        layout.setContentsMargins(8, 0, 4, 0)
+        layout.setSpacing(0)
+
+        # --- Menu buttons (left side) ---
+        menu_layout = QHBoxLayout()
+        menu_layout.setSpacing(0)
+
+        # File menu
+        self.file_menu_btn = QPushButton("File")
+        self.file_menu_btn.setFont(QFont(Theme.MONO_FONT, 9))
+        self.file_menu_btn.setProperty("variant", "menu")
+        self.file_menu_btn.clicked.connect(self._show_file_menu)
+        menu_layout.addWidget(self.file_menu_btn)
+
+        # Agents menu
+        self.agents_menu_btn = QPushButton("Agents")
+        self.agents_menu_btn.setFont(QFont(Theme.MONO_FONT, 9))
+        self.agents_menu_btn.setProperty("variant", "menu")
+        self.agents_menu_btn.clicked.connect(self._show_agents_menu)
+        menu_layout.addWidget(self.agents_menu_btn)
+
+        # Settings menu
+        self.settings_menu_btn = QPushButton("Settings")
+        self.settings_menu_btn.setFont(QFont(Theme.MONO_FONT, 9))
+        self.settings_menu_btn.setProperty("variant", "menu")
+        self.settings_menu_btn.clicked.connect(self._show_settings_menu)
+        menu_layout.addWidget(self.settings_menu_btn)
+
+        # Help menu
+        self.help_menu_btn = QPushButton("Help")
+        self.help_menu_btn.setFont(QFont(Theme.MONO_FONT, 9))
+        self.help_menu_btn.setProperty("variant", "menu")
+        self.help_menu_btn.clicked.connect(self._show_help_menu)
+        menu_layout.addWidget(self.help_menu_btn)
+
+        layout.addLayout(menu_layout)
+
+        # --- Spacer (draggable area) ---
+        layout.addStretch()
+
+        # --- Window controls (right side) ---
+        controls_layout = QHBoxLayout()
+        controls_layout.setSpacing(0)
+
+        # Minimize
+        self.min_btn = QPushButton("─")
+        self.min_btn.setObjectName("winControlMin")
+        self.min_btn.setFixedSize(46, 36)
+        self.min_btn.setFont(QFont(Theme.MONO_FONT, 10))
+        self.min_btn.clicked.connect(self.showMinimized)
+        controls_layout.addWidget(self.min_btn)
+
+        # Maximize/Restore
+        self.max_btn = QPushButton("□")
+        self.max_btn.setObjectName("winControlMax")
+        self.max_btn.setFixedSize(46, 36)
+        self.max_btn.setFont(QFont(Theme.MONO_FONT, 10))
+        self.max_btn.clicked.connect(self._toggle_maximize)
+        controls_layout.addWidget(self.max_btn)
+
+        # Close
+        self.close_btn = QPushButton("✕")
+        self.close_btn.setObjectName("winControlClose")
+        self.close_btn.setFixedSize(46, 36)
+        self.close_btn.setFont(QFont(Theme.MONO_FONT, 10))
+        self.close_btn.clicked.connect(self.close)
+        controls_layout.addWidget(self.close_btn)
+
+        layout.addLayout(controls_layout)
+
+        return title_bar
+
+    def _show_file_menu(self):
+        """Show File menu below button."""
+        menu = QMenu(self)
+        menu.addAction("Console", self.open_console)
+        menu.addSeparator()
+        menu.addAction("Pause", self.pause_all)
+        menu.addSeparator()
+        menu.addAction("Export Keys...", self.export_keys)
+        menu.addSeparator()
+        menu.addAction("Quit", self.close)
+        menu.exec(self.file_menu_btn.mapToGlobal(self.file_menu_btn.rect().bottomLeft()))
+
+    def _show_agents_menu(self):
+        """Show Agents menu below button."""
+        menu = QMenu(self)
+        menu.addAction("Register Agent...", self.register_agent)
+        menu.addSeparator()
+        menu.addAction("Suspend All", self.suspend_all_agents)
+        menu.exec(self.agents_menu_btn.mapToGlobal(self.agents_menu_btn.rect().bottomLeft()))
+
+    def _show_settings_menu(self):
+        """Show Settings menu below button."""
+        menu = QMenu(self)
+        menu.addAction("Preferences...", self.show_settings)
+        menu.exec(self.settings_menu_btn.mapToGlobal(self.settings_menu_btn.rect().bottomLeft()))
+
+    def _show_help_menu(self):
+        """Show Help menu below button."""
+        menu = QMenu(self)
+        menu.addAction("Quick Start", self.show_quick_start)
+        menu.addAction("Documentation", self.open_documentation)
+        menu.addSeparator()
+        menu.addAction("About MultiClaw", self.show_about)
+        menu.exec(self.help_menu_btn.mapToGlobal(self.help_menu_btn.rect().bottomLeft()))
+
+    def _toggle_maximize(self):
+        """Toggle between maximized and normal window state."""
+        if self.isMaximized():
+            self.showNormal()
+            self.max_btn.setText("□")
+        else:
+            self.showMaximized()
+            self.max_btn.setText("❐")
+
+    # --- Mouse events for dragging ---
+    def mousePressEvent(self, event: QMouseEvent):
+        """Start dragging if clicking on title bar."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            # Check if click is in title bar area (top 36px)
+            if event.position().y() <= 36:
+                self._drag_pos = event.globalPosition().toPoint()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        """Handle window dragging."""
+        if self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            # If maximized, restore to normal first
+            if self.isMaximized():
+                # Get the proportion of click position
+                ratio = event.position().x() / self.width()
+                self.showNormal()
+                # Reposition so cursor stays at same relative position
+                new_x = int(event.globalPosition().x() - self.width() * ratio)
+                new_y = int(event.globalPosition().y() - 18)  # Center of title bar
+                self.move(new_x, new_y)
+                self._drag_pos = event.globalPosition().toPoint()
+                self.max_btn.setText("□")
+            else:
+                diff = event.globalPosition().toPoint() - self._drag_pos
+                self.move(self.pos() + diff)
+                self._drag_pos = event.globalPosition().toPoint()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        """End dragging."""
+        self._drag_pos = None
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        """Double-click on title bar toggles maximize."""
+        if event.button() == Qt.MouseButton.LeftButton and event.position().y() <= 36:
+            self._toggle_maximize()
+        super().mouseDoubleClickEvent(event)
+
+    def _enable_dwm_shadow(self):
+        """Enable Windows DWM drop shadow for frameless window."""
+        import sys
+        if sys.platform != 'win32':
+            return
+
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            # Get the window handle
+            hwnd = int(self.winId())
+
+            # DWM constants
+            DWMWA_NCRENDERING_POLICY = 2
+            DWMNCRP_ENABLED = 2
+
+            # Margins for extending frame into client area (-1 = full shadow)
+            class MARGINS(ctypes.Structure):
+                _fields_ = [
+                    ("cxLeftWidth", ctypes.c_int),
+                    ("cxRightWidth", ctypes.c_int),
+                    ("cyTopHeight", ctypes.c_int),
+                    ("cyBottomHeight", ctypes.c_int),
+                ]
+
+            dwmapi = ctypes.windll.dwmapi
+
+            # Enable non-client rendering
+            policy = ctypes.c_int(DWMNCRP_ENABLED)
+            dwmapi.DwmSetWindowAttribute(
+                hwnd, DWMWA_NCRENDERING_POLICY,
+                ctypes.byref(policy), ctypes.sizeof(policy)
+            )
+
+            # Extend frame to create shadow
+            margins = MARGINS(1, 1, 1, 1)
+            dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
+
+        except Exception:
+            pass  # Silently fail on non-Windows or if DWM unavailable

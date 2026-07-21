@@ -10,7 +10,7 @@ Provides dialogs for:
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QTextEdit, QWidget, QCheckBox, QMessageBox,
+    QLineEdit, QTextEdit, QWidget, QCheckBox,
     QApplication, QComboBox, QSpinBox, QFrame, QGroupBox,
     QListWidget, QListWidgetItem
 )
@@ -22,28 +22,27 @@ from typing import Optional
 from .crypto import Wallet, PrivateKeyWallet, load_wallet, MultiClawWallet, NO_PASSWORD_SENTINEL
 from eth_account.hdaccount import generate_mnemonic
 
-# Import shared clipboard helper from ui module
+# Import shared clipboard helper and FramelessDialog from ui module
 from ..ui.dialogs import copy_sensitive_to_clipboard, CLIPBOARD_CLEAR_TIMEOUT
+from ..ui.theme import FramelessDialog, FramelessMessageBox
 
 
 # ============================================
 # Welcome Dialog (First Run)
 # ============================================
 
-class WelcomeDialog(QDialog):
+class WelcomeDialog(FramelessDialog):
     """Initial dialog for creating or importing a wallet."""
 
     BUTTON_WIDTH = 200
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Welcome to MultiClaw")
+        super().__init__("Welcome to MultiClaw", parent, width=350)
         self.setModal(True)
-        self.setFixedWidth(350)
 
         self.choice = None  # 'create' or 'import'
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         subtitle = QLabel("Secure payment authorization for AI agents")
@@ -82,7 +81,7 @@ class WelcomeDialog(QDialog):
 # Password Setup Dialog
 # ============================================
 
-class PasswordSetupDialog(QDialog):
+class PasswordSetupDialog(FramelessDialog):
     """Dialog for setting wallet password."""
 
     # Sentinel value for no password (unencrypted storage)
@@ -90,15 +89,14 @@ class PasswordSetupDialog(QDialog):
     BUTTON_WIDTH = 100
 
     def __init__(self, parent=None, is_new: bool = True):
-        super().__init__(parent)
-        self.setWindowTitle("Set Password" if is_new else "Enter Password")
+        title = "Set Password" if is_new else "Enter Password"
+        super().__init__(title, parent, width=400)
         self.setModal(True)
-        self.setFixedWidth(400)
 
         self.password = None
         self.is_new = is_new
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         if is_new:
@@ -137,7 +135,7 @@ class PasswordSetupDialog(QDialog):
             layout.addWidget(self.no_password_warning)
 
         self.error_label = QLabel("")
-        self.error_label.setStyleSheet("color: red;")
+        self.error_label.setProperty("role", "error")
         layout.addWidget(self.error_label)
 
         layout.addStretch()
@@ -208,20 +206,18 @@ class PasswordSetupDialog(QDialog):
 # Import Choice Dialog
 # ============================================
 
-class ImportChoiceDialog(QDialog):
+class ImportChoiceDialog(FramelessDialog):
     """Dialog for choosing import method (seed phrase or private key)."""
 
     BUTTON_WIDTH = 220
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Import Wallet")
+        super().__init__("Import Wallet", parent, width=350)
         self.setModal(True)
-        self.setFixedWidth(350)
 
         self.choice = None  # 'seed' or 'pkey'
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         subtitle = QLabel("Choose how to import your wallet")
@@ -261,7 +257,7 @@ class ImportChoiceDialog(QDialog):
 # Seed Phrase Import Dialog
 # ============================================
 
-class SeedImportDialog(QDialog):
+class SeedImportDialog(FramelessDialog):
     """Dialog for importing a wallet from seed phrase."""
 
     # Derivation path templates - use {} as placeholder for account index
@@ -272,15 +268,13 @@ class SeedImportDialog(QDialog):
     ]
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Import from Seed Phrase")
-        self.setMinimumWidth(450)
+        super().__init__("Import from Seed Phrase", parent, width=450)
         self.setModal(True)
 
         self.seed_phrase = None
         self.derivation_path = "m/44'/60'/0'/0/0"
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         subtitle = QLabel("Enter your 12 or 24 word recovery phrase, separated by spaces.")
@@ -340,7 +334,7 @@ class SeedImportDialog(QDialog):
         self.update_path_preview()
 
         self.error_label = QLabel("")
-        self.error_label.setStyleSheet("color: red;")
+        self.error_label.setProperty("role", "error")
         layout.addWidget(self.error_label)
 
         layout.addStretch()
@@ -412,18 +406,16 @@ class SeedImportDialog(QDialog):
 # Private Key Import Dialog
 # ============================================
 
-class PrivateKeyImportDialog(QDialog):
+class PrivateKeyImportDialog(FramelessDialog):
     """Dialog for importing a wallet from private key."""
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Import from Private Key")
-        self.setMinimumWidth(400)
+        super().__init__("Import from Private Key", parent, width=400)
         self.setModal(True)
 
         self.private_key = None
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         subtitle = QLabel("Enter a 64-character hex private key (with or without 0x prefix).")
@@ -445,7 +437,7 @@ class PrivateKeyImportDialog(QDialog):
         layout.addWidget(self.show_check)
 
         self.error_label = QLabel("")
-        self.error_label.setStyleSheet("color: red;")
+        self.error_label.setProperty("role", "error")
         layout.addWidget(self.error_label)
 
         layout.addStretch()
@@ -499,20 +491,18 @@ class PrivateKeyImportDialog(QDialog):
 # Seed Phrase Backup Dialog
 # ============================================
 
-class SeedBackupDialog(QDialog):
+class SeedBackupDialog(FramelessDialog):
     """Dialog showing seed phrase for backup."""
 
     BUTTON_WIDTH = 150
 
     def __init__(self, seed_phrase: str, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Backup Your Seed Phrase")
-        self.setFixedWidth(500)
+        super().__init__("Backup Your Seed Phrase", parent, width=500)
         self.setModal(True)
 
         self.seed_phrase = seed_phrase
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         warning = QLabel("WARNING: This is the ONLY way to recover your wallet. Store it safely offline. Never share it with anyone.")
@@ -531,7 +521,7 @@ class SeedBackupDialog(QDialog):
 
         seed_box = QLabel(seed_text.strip())
         seed_box.setFont(QFont("Consolas", 11))
-        seed_box.setStyleSheet("background-color: #ffffcc; padding: 12px; border: 1px solid #cccc00;")
+        seed_box.setObjectName("seedBox")
         layout.addWidget(seed_box)
 
         copy_btn = QPushButton("Copy to Clipboard")
@@ -558,7 +548,7 @@ class SeedBackupDialog(QDialog):
 
     def on_continue(self):
         if not self.confirm_check.isChecked():
-            QMessageBox.warning(
+            FramelessMessageBox.warning(
                 self,
                 "Backup Required",
                 "Please confirm you have written down your seed phrase."
@@ -571,18 +561,17 @@ class SeedBackupDialog(QDialog):
 # Unlock Dialog
 # ============================================
 
-class UnlockDialog(QDialog):
+class UnlockDialog(FramelessDialog):
     """Dialog for unlocking an existing wallet."""
 
     def __init__(self, wallet_path: Path, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Unlock Wallet")
+        super().__init__("Unlock Wallet", parent, width=350)
         self.setModal(True)
 
         self.wallet_path = wallet_path
         self.wallet = None
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         addr_label = QLabel(f"Wallet: {wallet_path.stem}")
@@ -595,7 +584,7 @@ class UnlockDialog(QDialog):
         layout.addWidget(self.password_input)
 
         self.error_label = QLabel("")
-        self.error_label.setStyleSheet("color: red;")
+        self.error_label.setProperty("role", "error")
         layout.addWidget(self.error_label)
 
         layout.addStretch()
@@ -719,7 +708,7 @@ def run_wallet_setup(wallet_dir: Path, parent=None) -> Optional[Wallet | Private
 # Add Address Dialog (New Multi-Seed System)
 # ============================================
 
-class AddAddressDialog(QDialog):
+class AddAddressDialog(FramelessDialog):
     """
     Dialog for adding a new address to the wallet.
 
@@ -733,19 +722,16 @@ class AddAddressDialog(QDialog):
     BUTTON_WIDTH = 200
 
     def __init__(self, wallet: MultiClawWallet, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Add Address")
+        super().__init__("Add Address", parent, width=450)
         self.setModal(True)
-        self.setFixedWidth(450)
         self.setMinimumHeight(320)
 
         self.wallet = wallet
         self.choice = None  # 'existing_seed', 'new_seed', 'import_seed', 'import_pkey'
         self.selected_seed_id = None
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
-        layout.setContentsMargins(16, 16, 16, 16)
 
         # Derive group (only if seeds exist)
         if wallet.seeds:
@@ -847,20 +833,18 @@ class AddAddressDialog(QDialog):
 # Seed Selection Dialog
 # ============================================
 
-class SeedSelectionDialog(QDialog):
+class SeedSelectionDialog(FramelessDialog):
     """Dialog for selecting which seed to derive from."""
 
     def __init__(self, wallet: MultiClawWallet, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Select Seed")
+        super().__init__("Select Seed", parent, width=400)
         self.setModal(True)
-        self.setMinimumWidth(400)
         self.setMinimumHeight(300)
 
         self.wallet = wallet
         self.selected_seed_id = None
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         subtitle = QLabel("Choose which seed to derive a new address from")
@@ -931,7 +915,7 @@ class SeedSelectionDialog(QDialog):
 # Derivation Browser Dialog
 # ============================================
 
-class DerivationBrowserDialog(QDialog):
+class DerivationBrowserDialog(FramelessDialog):
     """
     Dialog for browsing and selecting addresses from a seed.
 
@@ -953,16 +937,11 @@ class DerivationBrowserDialog(QDialog):
     ADDRESSES_PER_PAGE = 10
 
     def __init__(self, wallet: MultiClawWallet, seed_id: str, parent=None, creation_mode: bool = False):
-        super().__init__(parent)
         self.creation_mode = creation_mode
-
-        if creation_mode:
-            self.setWindowTitle("Select Addresses")
-        else:
-            self.setWindowTitle(f"Derive Addresses from {seed_id}")
+        title = "Select Addresses" if creation_mode else f"Derive Addresses from {seed_id}"
+        super().__init__(title, parent, width=600)
 
         self.setModal(True)
-        self.setMinimumWidth(600)
         self.setMinimumHeight(500)
 
         self.wallet = wallet
@@ -988,7 +967,7 @@ class DerivationBrowserDialog(QDialog):
         # Start at 0 to show existing addresses for editing
         # (previously started after highest existing index, but that hid existing addresses)
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(8)
 
         # Header
@@ -1048,7 +1027,7 @@ class DerivationBrowserDialog(QDialog):
         if not creation_mode:
             delete_seed_btn = QPushButton("Delete Seed")
             delete_seed_btn.setToolTip("Delete this seed and all its addresses")
-            delete_seed_btn.setStyleSheet("background: #B7410E; color: white;")
+            delete_seed_btn.setProperty("variant", "danger")
             delete_seed_btn.clicked.connect(self.on_delete_seed)
             btn_layout.addWidget(delete_seed_btn)
             btn_layout.addSpacing(16)
@@ -1240,15 +1219,12 @@ class DerivationBrowserDialog(QDialog):
     def on_delete_seed(self):
         """Request deletion of the entire seed."""
         # Basic confirmation (agent warning will be shown by WalletTab)
-        reply = QMessageBox.question(
+        if FramelessMessageBox.question(
             self,
             "Delete Seed",
             f"Delete seed '{self.seed_id}' and all its addresses?\n\n"
-            "This action cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        if reply == QMessageBox.StandardButton.Yes:
+            "This action cannot be undone."
+        ):
             self.delete_seed_requested = True
             self.accept()
 
@@ -1257,20 +1233,18 @@ class DerivationBrowserDialog(QDialog):
 # New Seed Creation Dialog
 # ============================================
 
-class NewSeedDialog(QDialog):
+class NewSeedDialog(FramelessDialog):
     """Dialog for creating a new seed phrase."""
 
     BUTTON_WIDTH = 150
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Create New Seed")
+        super().__init__("Create New Seed", parent, width=500)
         self.setModal(True)
-        self.setFixedWidth(500)
 
         self.seed_phrase = None
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         warning = QLabel(
@@ -1296,7 +1270,7 @@ class NewSeedDialog(QDialog):
 
         seed_box = QLabel(seed_text.strip())
         seed_box.setFont(QFont("Consolas", 11))
-        seed_box.setStyleSheet("background-color: #ffffcc; padding: 12px; border: 1px solid #cccc00;")
+        seed_box.setObjectName("seedBox")
         layout.addWidget(seed_box)
 
         copy_btn = QPushButton("Copy to Clipboard")
@@ -1330,7 +1304,7 @@ class NewSeedDialog(QDialog):
 
     def on_continue(self):
         if not self.confirm_check.isChecked():
-            QMessageBox.warning(
+            FramelessMessageBox.warning(
                 self,
                 "Backup Required",
                 "Please confirm you have written down your seed phrase."
@@ -1344,18 +1318,16 @@ class NewSeedDialog(QDialog):
 # Import Seed Dialog (for new wallet system)
 # ============================================
 
-class ImportSeedToWalletDialog(QDialog):
+class ImportSeedToWalletDialog(FramelessDialog):
     """Dialog for importing a seed phrase into an existing wallet."""
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Import Seed Phrase")
+        super().__init__("Import Seed Phrase", parent, width=450)
         self.setModal(True)
-        self.setMinimumWidth(450)
 
         self.seed_phrase = None
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         subtitle = QLabel("Enter your 12 or 24 word recovery phrase, separated by spaces.")
@@ -1369,7 +1341,7 @@ class ImportSeedToWalletDialog(QDialog):
         layout.addWidget(self.seed_input)
 
         self.error_label = QLabel("")
-        self.error_label.setStyleSheet("color: red;")
+        self.error_label.setProperty("role", "error")
         layout.addWidget(self.error_label)
 
         layout.addStretch()
@@ -1412,19 +1384,17 @@ class ImportSeedToWalletDialog(QDialog):
 # Import Private Key Dialog (for new wallet system)
 # ============================================
 
-class ImportPrivateKeyToWalletDialog(QDialog):
+class ImportPrivateKeyToWalletDialog(FramelessDialog):
     """Dialog for importing a private key into an existing wallet."""
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Import Private Key")
+        super().__init__("Import Private Key", parent, width=400)
         self.setModal(True)
-        self.setMinimumWidth(400)
 
         self.private_key = None
         self.name = None
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         subtitle = QLabel("Enter a 64-character hex private key (with or without 0x prefix).")
@@ -1453,7 +1423,7 @@ class ImportPrivateKeyToWalletDialog(QDialog):
         layout.addWidget(self.name_input)
 
         self.error_label = QLabel("")
-        self.error_label.setStyleSheet("color: red;")
+        self.error_label.setProperty("role", "error")
         layout.addWidget(self.error_label)
 
         layout.addStretch()
@@ -1508,19 +1478,17 @@ class ImportPrivateKeyToWalletDialog(QDialog):
 # Primer Wallet Unlock Dialog
 # ============================================
 
-class MultiClawWalletUnlockDialog(QDialog):
+class MultiClawWalletUnlockDialog(FramelessDialog):
     """Dialog for unlocking the Primer wallet."""
 
     def __init__(self, wallet_path: Path, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Unlock Wallet")
+        super().__init__("Unlock Wallet", parent, width=350)
         self.setModal(True)
-        self.setFixedWidth(350)
 
         self.wallet_path = wallet_path
         self.wallet = None
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         layout.addSpacing(16)
@@ -1532,7 +1500,7 @@ class MultiClawWalletUnlockDialog(QDialog):
         layout.addWidget(self.password_input)
 
         self.error_label = QLabel("")
-        self.error_label.setStyleSheet("color: red;")
+        self.error_label.setProperty("role", "error")
         layout.addWidget(self.error_label)
 
         layout.addStretch()
@@ -1576,7 +1544,7 @@ class MultiClawWalletUnlockDialog(QDialog):
 from PyQt6.QtWidgets import QStackedWidget, QRadioButton, QButtonGroup, QScrollArea
 
 
-class CreateWalletWizard(QDialog):
+class CreateWalletWizard(FramelessDialog):
     """
     Multi-step wizard for creating a new Primer wallet.
 
@@ -1597,10 +1565,8 @@ class CreateWalletWizard(QDialog):
     PAGE_IMPORT_PKEY = 4
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Create New Wallet")
+        super().__init__("Create New Wallet", parent, width=600)
         self.setModal(True)
-        self.setFixedWidth(600)
         self.setMinimumHeight(450)
 
         # Results
@@ -1612,7 +1578,7 @@ class CreateWalletWizard(QDialog):
         self.selected_indices = [0]  # Default to first address
         self.selected_names: dict[int, str] = {}  # index -> custom name
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         # Stacked widget for pages
@@ -1628,7 +1594,7 @@ class CreateWalletWizard(QDialog):
 
         # Error label (shared across pages)
         self.error_label = QLabel("")
-        self.error_label.setStyleSheet("color: red;")
+        self.error_label.setProperty("role", "error")
         layout.addWidget(self.error_label)
 
         # Navigation buttons
@@ -1726,7 +1692,7 @@ class CreateWalletWizard(QDialog):
         layout.addWidget(self.method_new_seed)
 
         new_seed_desc = QLabel("Generate a new 12-word recovery phrase")
-        new_seed_desc.setStyleSheet("color: gray; margin-left: 24px; font-size: 11px;")
+        new_seed_desc.setProperty("role", "hint")
         layout.addWidget(new_seed_desc)
 
         layout.addSpacing(8)
@@ -1736,7 +1702,7 @@ class CreateWalletWizard(QDialog):
         layout.addWidget(self.method_import_seed)
 
         import_seed_desc = QLabel("Restore from a 12 or 24-word recovery phrase")
-        import_seed_desc.setStyleSheet("color: gray; margin-left: 24px; font-size: 11px;")
+        import_seed_desc.setProperty("role", "hint")
         layout.addWidget(import_seed_desc)
 
         layout.addSpacing(8)
@@ -1746,7 +1712,7 @@ class CreateWalletWizard(QDialog):
         layout.addWidget(self.method_import_pkey)
 
         import_pkey_desc = QLabel("Import a single address from a hex private key")
-        import_pkey_desc.setStyleSheet("color: gray; margin-left: 24px; font-size: 11px;")
+        import_pkey_desc.setProperty("role", "hint")
         layout.addWidget(import_pkey_desc)
 
         layout.addStretch()
@@ -1767,7 +1733,7 @@ class CreateWalletWizard(QDialog):
             "This is the ONLY way to recover your wallet."
         )
         warning.setWordWrap(True)
-        warning.setStyleSheet("color: #B7410E;")
+        warning.setProperty("role", "warn")
         layout.addWidget(warning)
 
         layout.addSpacing(8)
@@ -1775,9 +1741,7 @@ class CreateWalletWizard(QDialog):
         # Seed display box
         self.ns_seed_display = QLabel()
         self.ns_seed_display.setFont(QFont("Consolas", 11))
-        self.ns_seed_display.setStyleSheet(
-            "background-color: #ffffcc; padding: 12px; border: 1px solid #cccc00;"
-        )
+        self.ns_seed_display.setObjectName("seedBox")  # Styled via QSS
         self.ns_seed_display.setWordWrap(True)
         self.ns_seed_display.setMinimumHeight(80)
         layout.addWidget(self.ns_seed_display)
@@ -1843,7 +1807,7 @@ class CreateWalletWizard(QDialog):
         layout.addWidget(desc)
 
         note = QLabel("Note: Private keys cannot derive additional addresses.")
-        note.setStyleSheet("color: gray; font-size: 11px;")
+        note.setProperty("role", "hint")
         layout.addWidget(note)
 
         layout.addSpacing(8)
@@ -2073,20 +2037,18 @@ class CreateWalletWizard(QDialog):
 # Add Wallet Choice Dialog
 # ============================================
 
-class AddWalletChoiceDialog(QDialog):
+class AddWalletChoiceDialog(FramelessDialog):
     """Dialog for choosing how to add a wallet: load existing or create new."""
 
     BUTTON_WIDTH = 200
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Add Wallet")
+        super().__init__("Add Wallet", parent, width=350)
         self.setModal(True)
-        self.setFixedWidth(350)
 
         self.choice = None  # 'load' or 'create'
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         layout.addSpacing(16)
@@ -2126,18 +2088,16 @@ class AddWalletChoiceDialog(QDialog):
 # Wallet Filename Dialog
 # ============================================
 
-class WalletFilenameDialog(QDialog):
+class WalletFilenameDialog(FramelessDialog):
     """Dialog for entering a custom wallet filename."""
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Create New Wallet")
+        super().__init__("Create New Wallet", parent, width=400)
         self.setModal(True)
-        self.setFixedWidth(400)
 
         self.filename = None
 
-        layout = QVBoxLayout(self)
+        layout = self.content_layout
         layout.setSpacing(12)
 
         desc = QLabel("Enter a name for your wallet file:")
@@ -2150,13 +2110,13 @@ class WalletFilenameDialog(QDialog):
         input_layout.addWidget(self.name_input)
 
         suffix_label = QLabel(".wallet")
-        suffix_label.setStyleSheet("color: gray;")
+        suffix_label.setProperty("role", "muted")
         input_layout.addWidget(suffix_label)
 
         layout.addLayout(input_layout)
 
         self.error_label = QLabel("")
-        self.error_label.setStyleSheet("color: red;")
+        self.error_label.setProperty("role", "error")
         layout.addWidget(self.error_label)
 
         layout.addStretch()

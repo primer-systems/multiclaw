@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QColor
 
-from .theme import Theme
+from .theme import Theme, set_role
 
 logger = logging.getLogger(__name__)
 
@@ -146,26 +146,19 @@ class MarketTab(QWidget):
 
         self.detail_title = QLabel("Select a service to view details")
         self.detail_title.setFont(QFont(Theme.MONO_FONT, 11, QFont.Weight.Bold))
-        self.detail_title.setStyleSheet(f"color: {Theme.BLACK};")
         detail_header.addWidget(self.detail_title)
 
         detail_header.addStretch()
 
         self.copy_snippet_btn = QPushButton("Copy Agent Snippet")
         self.copy_snippet_btn.setFont(QFont(Theme.MONO_FONT, 9))
-        self.copy_snippet_btn.setStyleSheet(
-            f"background-color: {Theme.LIME}; color: {Theme.BLACK}; "
-            f"font-weight: bold; padding: 4px 12px; border-radius: 3px;"
-        )
+        self.copy_snippet_btn.setProperty("variant", "primary")
         self.copy_snippet_btn.clicked.connect(self._copy_agent_snippet)
         self.copy_snippet_btn.setEnabled(False)
         detail_header.addWidget(self.copy_snippet_btn)
 
         self.copy_url_btn = QPushButton("Copy URL")
         self.copy_url_btn.setFont(QFont(Theme.MONO_FONT, 9))
-        self.copy_url_btn.setStyleSheet(
-            f"padding: 4px 12px; border-radius: 3px;"
-        )
         self.copy_url_btn.clicked.connect(self._copy_selected_url)
         self.copy_url_btn.setEnabled(False)
         detail_header.addWidget(self.copy_url_btn)
@@ -175,14 +168,7 @@ class MarketTab(QWidget):
         self.detail_text = QTextEdit()
         self.detail_text.setReadOnly(True)
         self.detail_text.setFont(QFont(Theme.MONO_FONT, 9))
-        self.detail_text.setStyleSheet(f"""
-            QTextEdit {{
-                background-color: {Theme.BLACK};
-                border: 1px solid {Theme.CHARCOAL};
-                color: {Theme.WHITE};
-                padding: 8px;
-            }}
-        """)
+        self.detail_text.setObjectName("terminal")  # Styled via QSS
         self.detail_text.setMinimumHeight(120)
         detail_layout.addWidget(self.detail_text)
 
@@ -197,7 +183,7 @@ class MarketTab(QWidget):
 
         self.status_label = QLabel("No data loaded")
         self.status_label.setFont(QFont(Theme.MONO_FONT, 8))
-        self.status_label.setStyleSheet(f"color: {Theme.CHARCOAL};")
+        self.status_label.setProperty("role", "muted")
         status_row.addWidget(self.status_label)
 
         status_row.addStretch()
@@ -235,7 +221,7 @@ class MarketTab(QWidget):
 
         if error:
             self.status_label.setText(f"Error: {error}")
-            self.status_label.setStyleSheet(f"color: {Theme.ERROR}; font-size: 8pt;")
+            set_role(self.status_label, role="error")
             self.activity.emit(f"Market fetch failed: {error}", True)
             return
 
@@ -258,7 +244,7 @@ class MarketTab(QWidget):
 
         self._apply_filters()
 
-        self.status_label.setStyleSheet(f"color: {Theme.CHARCOAL}; font-size: 8pt;")
+        set_role(self.status_label, role="muted")
         self.status_label.setText(
             f"{len(services)} services · Last updated: {self._last_fetch.strftime('%H:%M:%S')}"
         )
